@@ -9,6 +9,8 @@ struct BotEditor: View {
 
     @State private var draft = Brain.BotDraft()
     @State private var avatar: String?
+    /// Parts of the draft face, for the animated preview.
+    @State private var face: Brain.Face?
     @State private var choosingFace = false
     @State private var saving = false
     @State private var confirmDelete = false
@@ -19,7 +21,9 @@ struct BotEditor: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 16) {
                 ZStack(alignment: .bottomTrailing) {
-                    Button { choosingFace = true } label: { Avatar(svg: avatar, size: 64) }
+                    Button { choosingFace = true } label: {
+                        if let face { AnimatedFace(face: face, size: 64, seed: draft.avatarSeed) } else { Avatar(svg: avatar, size: 64) }
+                    }
                         .buttonStyle(.plain)
                         .help("Choose a face")
                         .accessibilityLabel("Choose a face")
@@ -79,6 +83,10 @@ struct BotEditor: View {
             Text("The conversation history will be deleted. The device is not affected.")
         }
         .task { await load() }
+        .task(id: draft.avatarSeed) {
+            guard !draft.avatarSeed.isEmpty else { return }
+            face = await brain.avatarOptions(draft.avatarSeed)?.face
+        }
     }
 
     private func load() async {
@@ -130,7 +138,11 @@ struct AvatarPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Avatar(svg: options?.svg ?? svg, size: 52)
+                if let face = options?.face {
+                    AnimatedFace(face: face, size: 52, seed: value)
+                } else {
+                    Avatar(svg: options?.svg ?? svg, size: 52)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Face").font(.system(size: 14, weight: .semibold))
                     Text("Pick each part, or roll the dice.").font(.system(size: 11)).foregroundStyle(Theme.secondary)

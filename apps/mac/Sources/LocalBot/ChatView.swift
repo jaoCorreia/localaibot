@@ -5,22 +5,31 @@ struct ChatView: View {
     @ObservedObject var brain: Brain
     let bot: Brain.Bot
     @State private var draft = ""
+    @State private var tab: Tab = .chat
     @FocusState private var focused: Bool
 
+    enum Tab { case chat, routines }
+
     private var messages: [Brain.Message] { brain.messages[bot.id] ?? [] }
+    private var deviceName: String {
+        brain.computers.first { $0.id == bot.ownedComputer }?.name ?? "the device"
+    }
     private var thinking: Bool { brain.thinking.contains(bot.id) }
     private var ready: Bool { brain.providerStatus?.configured == true }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            if messages.isEmpty {
+            tabs
+            if tab == .routines {
+                RoutinesView(model: model, brain: brain, bot: bot)
+            } else if messages.isEmpty {
                 Placeholder(icon: "bubble.left", text: "Chat with \(bot.name)",
                             detail: ready ? "Give it a task or ask a question." : "Add an AI provider in Settings to start.")
             } else {
                 transcript
             }
-            composer
+            if tab == .chat { composer }
         }
         .background(Theme.sidebar)
         .task { await brain.loadHistory(bot.id) }
@@ -46,13 +55,30 @@ struct ChatView: View {
         .zIndex(1)
     }
 
+    private var tabs: some View {
+        let count = brain.routines.filter { $0.botId == bot.id }.count
+        return HStack(spacing: 4) {
+            TabPill(title: "Chat", selected: tab == .chat) { tab = .chat }
+            TabPill(title: count > 0 ? "Routines · \(count)" : "Routines", selected: tab == .routines) { tab = .routines }
+            Spacer()
+        }
+        .padding(.horizontal, 14).padding(.bottom, 6)
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(messages) { message in
-                        MessageRow(message: message, bot: bot, streaming: thinking && message.id == messages.last?.id)
-                            .id(message.id)
+                    ForEach(ChatItem.group(messages)) { item in
+                        switch item {
+                        case .message(let message):
+                            MessageRow(message: message, bot: bot, streaming: thinking && message.id == messages.last?.id)
+                                .id(message.id)
+                        case .steps(let steps):
+                            StepsGroup(steps: steps, deviceName: deviceName,
+                                       live: thinking && steps.last?.id == messages.last?.id)
+                                .id(steps.first!.id)
+                        }
                     }
                 }
                 .padding(.horizontal, 18).padding(.vertical, 18)
@@ -116,22 +142,22 @@ struct MessageRow: View {
     let streaming: Bool
 
     var body: some View {
-        if message.role == "activity" {
-            HStack(spacing: 8) {
-                Image(systemName: "cursorarrow.motionlines").font(.system(size: 10))
-                Text(message.text).font(.system(size: 11)).lineLimit(2)
-            }
-            .foregroundStyle(Theme.tertiary)
-            .padding(.leading, 32)
-        } else if message.role == "user" {
-            HStack {
+        if message.role == "user" {
+            VStack(alignment: .trailing, spacing: 4) {
+              if let routine = message.routine {
+                Label("Routine · \(routine.name)", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.tertiary)
+              }
+              HStack {
                 Spacer(minLength: 48)
                 Text(message.text)
                     .font(.system(size: 13))
                     .textSelection(.enabled)
                     .padding(.horizontal, 13).padding(.vertical, 9)
                     .background(RoundedRectangle(cornerRadius: 16).fill(Theme.raised))
+              }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             HStack(alignment: .top, spacing: 10) {
                 Avatar(svg: bot.avatar, size: 22).padding(.top, 1)
@@ -146,8 +172,7 @@ struct MessageRow: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let error = message.error {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 12)).foregroundStyle(Theme.danger)
+                        ErrorNote(title: error, detail: message.detail ?? (error.count > 90 ? error : nil))
                     }
                 }
                 Spacer(minLength: 0)
@@ -173,5 +198,177 @@ struct TypingDots: View {
             }
             .padding(.vertical, 6)
         }
+    }
+}
+
+/// Chat rows: plain messages, or a run of consecutive bot actions shown as one group.
+enum ChatItem: Identifiable {
+    case message(Brain.Message)
+    case steps([Brain.Message])
+
+    var id: String {
+        switch self {
+        case .message(let m): return m.id
+        case .steps(let s): return "steps-" + (s.first?.id ?? "")
+        }
+    }
+
+    static func group(_ messages: [Brain.Message]) -> [ChatItem] {
+        var items: [ChatItem] = []
+        var run: [Brain.Message] = []
+        for m in messages {
+            if m.role == "activity" {
+                run.append(m)
+            } else {
+                if !run.isEmpty { items.append(.steps(run)); run = [] }
+                items.append(.message(m))
+            }
+        }
+        if !run.isEmpty { items.append(.steps(run)) }
+        return items
+    }
+}
+
+/// A step, normalized: older history stored raw errors inside the text.
+struct Step {
+    let title: String
+    let problem: String?
+    let detail: String?
+
+    init(_ m: Brain.Message) {
+        if let error = m.error {
+            title = m.text; problem = error; detail = m.detail
+        } else if let range = m.text.range(of: ": Command failed") ?? m.text.range(of: ": Error") {
+            title = String(m.text[..<range.lowerBound])
+            problem = m.text.contains("is not running") ? "The device is off." : "Something went wrong on the device."
+            detail = String(m.text[range.lowerBound...].dropFirst(2))
+        } else {
+            title = m.text; problem = nil; detail = nil
+        }
+    }
+}
+
+/// Collapsed by default: "Used Linux · 6 steps". While the bot works it shows
+/// the current step; expand to see every step and any problems.
+struct StepsGroup: View {
+    let steps: [Brain.Message]
+    let deviceName: String
+    let live: Bool
+    @State private var expanded = false
+    @State private var hovering = false
+
+    private var parsed: [Step] { steps.map(Step.init) }
+    private var problems: Int { parsed.filter { $0.problem != nil }.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    if live {
+                        ProgressView().controlSize(.mini).frame(width: 14)
+                    } else {
+                        Image(systemName: problems > 0 ? "exclamationmark.triangle" : "cursorarrow.rays")
+                            .font(.system(size: 11)).frame(width: 14)
+                            .foregroundStyle(problems > 0 ? Theme.warn : Theme.secondary)
+                    }
+                    Text(summary).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 9).fill(hovering || expanded ? Theme.surface : .clear))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(parsed.enumerated()), id: \.offset) { _, step in
+                        StepRow(step: step)
+                    }
+                }
+                .padding(.leading, 32).padding(.trailing, 10).padding(.top, 4).padding(.bottom, 6)
+                .transition(.opacity)
+            }
+        }
+        .padding(.leading, 22)
+    }
+
+    private var summary: String {
+        if live, let last = parsed.last { return last.title }
+        let n = steps.count
+        var text = "Used \(deviceName) · \(n) step\(n == 1 ? "" : "s")"
+        if problems > 0 { text += " · \(problems) issue\(problems == 1 ? "" : "s")" }
+        return text
+    }
+}
+
+struct StepRow: View {
+    let step: Step
+    @State private var showDetail = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Circle().fill(step.problem == nil ? Theme.tertiary : Theme.warn).frame(width: 5, height: 5)
+                Text(step.title).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    .lineLimit(2).truncationMode(.middle)
+            }
+            if let problem = step.problem {
+                ErrorNote(title: problem, detail: step.detail, compact: true).padding(.leading, 12)
+            }
+        }
+    }
+}
+
+/// A plain-language problem; the technical text stays behind "Details".
+struct ErrorNote: View {
+    let title: String
+    let detail: String?
+    var compact = false
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.circle.fill").font(.system(size: compact ? 10 : 11))
+                    .foregroundStyle(Theme.warn)
+                Text(title).font(.system(size: compact ? 11 : 12)).foregroundStyle(Theme.text.opacity(0.85))
+                if detail != nil {
+                    Button(open ? "Hide details" : "Details") { open.toggle() }
+                        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                }
+            }
+            if open, let detail {
+                Text(detail)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Theme.secondary)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.surface))
+            }
+        }
+    }
+}
+
+struct TabPill: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Theme.text : Theme.secondary)
+                .padding(.horizontal, 11).padding(.vertical, 5)
+                .background(Capsule().fill(selected ? Theme.raised : (hovering ? Theme.surface : .clear)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

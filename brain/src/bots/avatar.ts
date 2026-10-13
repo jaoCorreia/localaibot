@@ -21,7 +21,7 @@ export const COLORS = {
 
 export const EYES = ["dot", "pill", "visor", "ring", "happy", "spark"] as const;
 export const MOUTHS = ["smile", "line", "dot", "o", "grin", "none"] as const;
-export const ACCESSORIES = ["none", "antenna", "orbit", "cheeks"] as const;
+export const ACCESSORIES = ["none", "antenna", "antennae", "orbit", "cheeks"] as const;
 
 type Color = keyof typeof COLORS;
 export interface AvatarSpec {
@@ -34,7 +34,7 @@ export interface AvatarSpec {
 const PART_LABELS: Record<string, string> = {
   dot: "Dots", pill: "Pills", visor: "Visor", ring: "Rings", happy: "Happy", spark: "Sparks",
   smile: "Smile", line: "Line", o: "Oh", grin: "Grin", none: "None",
-  antenna: "Antenna", orbit: "Orbit", cheeks: "Cheeks",
+  antenna: "Antenna", antennae: "Alien", orbit: "Orbit", cheeks: "Cheeks",
 };
 
 /** mulberry32 seeded by an FNV-1a hash of the seed string. */
@@ -115,7 +115,8 @@ function mouth(kind: AvatarSpec["mouth"]) {
 function accessory(kind: AvatarSpec["accessory"], deep: string) {
   switch (kind) {
     case "antenna":
-      return `<rect x="31" y="3" width="2" height="7" rx="1" fill="${INK}" opacity="0.8"/><circle cx="32" cy="3.5" r="2.6" fill="${INK}"/>`;
+    case "antennae":
+      return ""; // drawn outside the head in renderAvatar
     case "orbit":
       return ""; // drawn around the planet in renderAvatar
     case "cheeks":
@@ -132,6 +133,30 @@ export function renderAvatar(spec: AvatarSpec): string {
     accessory(spec.accessory, c.deep) +
     eyes(spec.eyes) +
     mouth(spec.mouth);
+  if (spec.accessory === "antennae") {
+    // Two curved stalks leaning outward, like an alien.
+    const stalk = (side: 1 | -1) => {
+      const bx = 32 + side * 8, tx = 32 + side * 16;
+      return `<path d="M${bx} 16 Q${bx - side * 1} 8 ${tx} 6" fill="none" stroke="${c.fill}" stroke-width="2.6" stroke-linecap="round"/>` +
+        `<circle cx="${tx}" cy="6" r="3.6" fill="${c.fill}"/>`;
+    };
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      stalk(-1) + stalk(1) +
+      `<g transform="translate(32 37.4) scale(0.8) translate(-32 -32)">${face}</g>` +
+      `</svg>`
+    );
+  }
+  if (spec.accessory === "antenna") {
+    // Head shrinks and drops so a springy antenna can stick out of the top.
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      `<path d="M32 15 L32 6.5" stroke="${c.fill}" stroke-width="2.6" stroke-linecap="round"/>` +
+      `<circle cx="32" cy="5" r="4" fill="${c.fill}"/>` +
+      `<g transform="translate(32 37.4) scale(0.8) translate(-32 -32)">${face}</g>` +
+      `</svg>`
+    );
+  }
   if (spec.accessory !== "orbit") {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${face}</svg>`;
   }
@@ -165,6 +190,7 @@ export function avatarOptions(value: string) {
   return {
     value: formatAvatar(base),
     svg: renderAvatar(base),
+    face: { ...base, fill: COLORS[base.color].fill, deep: COLORS[base.color].deep },
     colors: (Object.keys(COLORS) as Color[]).map((id) => ({ ...option({ color: id }, id, COLORS[id].label), fill: COLORS[id].fill })),
     eyes: EYES.map((id) => option({ eyes: id }, id, PART_LABELS[id])),
     mouths: MOUTHS.map((id) => option({ mouth: id }, id, PART_LABELS[id])),

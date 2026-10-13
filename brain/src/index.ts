@@ -5,6 +5,7 @@ import { Conversations } from "./chat/conversations.ts";
 import { addProvider, provider, providerStatus, removeProvider, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
 import { DockerProvider } from "./computers/docker.ts";
 import { LumeProvider } from "./computers/lume.ts";
+import { Routines } from "./routines/routines.ts";
 import type { ComputerProvider } from "./computers/types.ts";
 
 /**
@@ -44,6 +45,14 @@ const conversations = new Conversations(emit, async (bot) => {
 });
 
 const botsChanged = () => emit("bots", null);
+
+/** Scheduled tasks: each run is a turn in the bot's chat. */
+const routines = new Routines(
+  (routine) => conversations.runRoutine(bots.get(routine.botId), routine),
+  (botId) => conversations.isBusy(botId),
+  () => emit("routines", null),
+);
+routines.start();
 
 type Handler = (params: any) => unknown | Promise<unknown>;
 
@@ -121,6 +130,7 @@ const methods: Record<string, Handler> = {
   },
   "bots.delete": ({ id }) => {
     conversations.clear(id);
+    routines.deleteForBot(id);
     bots.delete(id);
     botsChanged();
   },
@@ -135,6 +145,16 @@ const methods: Record<string, Handler> = {
     bots.revoke(botId, computerId);
     botsChanged();
   },
+
+  // Routines
+  "routines.list": ({ botId }) => routines.list(botId),
+  "routines.create": (p) => {
+    bots.get(p.botId);
+    return routines.create(p);
+  },
+  "routines.update": ({ id, ...patch }) => routines.update(id, patch),
+  "routines.delete": ({ id }) => routines.delete(id),
+  "routines.runNow": ({ id }) => routines.runNow(id),
 
   // Chat
   "chat.history": ({ botId }) => conversations.history(botId),

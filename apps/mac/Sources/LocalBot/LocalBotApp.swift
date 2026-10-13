@@ -30,11 +30,13 @@ enum Sheet: Identifiable {
     case settings
     case newDevice
     case addBots(String)   // device id
+    case routine(botID: String, routineID: String?)
 
     var id: String {
         switch self {
         case .newDevice: return "new-device"
         case .addBots(let id): return "add-bots-\(id)"
+        case .routine(let bot, let routine): return "routine-\(bot)-\(routine ?? "new")"
         case .newBot: return "new"
         case .editBot(let id): return "edit-\(id)"
         case .settings: return "settings"
@@ -110,6 +112,7 @@ struct MainView: View {
             case .settings: SettingsSheet(brain: brain)
             case .newDevice: NewDeviceSheet(model: model, brain: brain)
             case .addBots(let id): AddBotsSheet(model: model, brain: brain, deviceID: id)
+            case .routine(let bot, let routine): RoutineEditor(brain: brain, botID: bot, routineID: routine)
             }
         }
         .overlay(alignment: .bottom) { ErrorToast(brain: brain) }

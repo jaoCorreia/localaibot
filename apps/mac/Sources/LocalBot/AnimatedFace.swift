@@ -43,6 +43,12 @@ struct Motion {
     var gazeY: CGFloat = 0
     /// 1 = open, ~0.1 = closed.
     var openness: CGFloat = 1
+    /// Antenna tilt in degrees, and the size of its tip (pulses while working).
+    var sway: Double = 0
+    var tip: CGFloat = 1
+    /// Second antenna (alien), on its own rhythm.
+    var sway2: Double = 0
+    var tip2: CGFloat = 1
 
     static let still = Motion()
 
@@ -63,6 +69,12 @@ struct Motion {
         }
         let doubleBlink = Int(t / period) % 3 == 0
         openness = min(blink(0), doubleBlink ? blink(0.24) : 1)
+
+        // Antenna: a lazy spring sway when idle; quicker, with a pulsing tip, while working.
+        sway = working ? sin(t * 5.2) * 11 : sin(t * 1.3) * 5 + sin(t * 0.47) * 3
+        tip = working ? CGFloat(1 + 0.22 * max(0, sin(t * 6.5))) : 1
+        sway2 = working ? sin(t * 4.6 + 1.7) * 11 : sin(t * 1.1 + 2.1) * 5 + sin(t * 0.61) * 3
+        tip2 = working ? CGFloat(1 + 0.22 * max(0, sin(t * 6.5 + .pi))) : 1
 
         if working {
             // Reading: smooth left-right scan, eyes slightly up.
@@ -91,7 +103,22 @@ struct FaceDrawing {
 
     func draw(in ctx: inout GraphicsContext) {
         let fill = Color(hex: face.fill)
-        if face.accessory == "orbit" {
+        if face.accessory == "antennae" {
+            alienAntenna(side: -1, sway: motion.sway, tip: motion.tip, in: &ctx, color: fill)
+            alienAntenna(side: 1, sway: motion.sway2, tip: motion.tip2, in: &ctx, color: fill)
+            var head = ctx
+            head.translateBy(x: 32, y: 37.4)
+            head.scaleBy(x: 0.8, y: 0.8)
+            head.translateBy(x: -32, y: -32)
+            body(in: &head, fill: fill)
+        } else if face.accessory == "antenna" {
+            antenna(in: &ctx, color: fill)
+            var head = ctx
+            head.translateBy(x: 32, y: 37.4)
+            head.scaleBy(x: 0.8, y: 0.8)
+            head.translateBy(x: -32, y: -32)
+            body(in: &head, fill: fill)
+        } else if face.accessory == "orbit" {
             ring(front: false, in: &ctx, color: fill)
             var planet = ctx
             planet.translateBy(x: 32, y: 29)
@@ -122,11 +149,34 @@ struct FaceDrawing {
         c.stroke(scaled, with: .color(color), style: StrokeStyle(lineWidth: 3, lineCap: .round))
     }
 
+    /// Stalk pivots at the top of the head; the tip rides on the end.
+    private func antenna(in ctx: inout GraphicsContext, color: Color) {
+        var c = ctx
+        c.translateBy(x: 32, y: 15)
+        c.rotate(by: .degrees(motion.sway))
+        var stalk = Path()
+        stalk.move(to: .zero)
+        stalk.addLine(to: CGPoint(x: 0, y: -8.5))
+        c.stroke(stalk, with: .color(color), style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+        let r = 4 * motion.tip
+        c.fill(Circle().path(in: CGRect(x: -r, y: -10 - r, width: r * 2, height: r * 2)), with: .color(color))
+    }
+
+    /// One curved alien stalk leaning out to `side` (-1 left, 1 right), pivoting at its base.
+    private func alienAntenna(side: CGFloat, sway: Double, tip: CGFloat, in ctx: inout GraphicsContext, color: Color) {
+        var c = ctx
+        c.translateBy(x: 32 + side * 8, y: 16)
+        c.rotate(by: .degrees(sway))
+        var stalk = Path()
+        stalk.move(to: .zero)
+        stalk.addQuadCurve(to: CGPoint(x: side * 8, y: -10), control: CGPoint(x: -side * 1, y: -8))
+        c.stroke(stalk, with: .color(color), style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
+        let r = 3.6 * tip
+        c.fill(Circle().path(in: CGRect(x: side * 8 - r, y: -10 - r, width: r * 2, height: r * 2)), with: .color(color))
+    }
+
     private func accessory(in ctx: inout GraphicsContext) {
         switch face.accessory {
-        case "antenna":
-            ctx.fill(RoundedRectangle(cornerRadius: 1).path(in: CGRect(x: 31, y: 3, width: 2, height: 7)), with: .color(ink.opacity(0.8)))
-            ctx.fill(Circle().path(in: CGRect(x: 29.4, y: 0.9, width: 5.2, height: 5.2)), with: .color(ink))
         case "cheeks":
             let deep = Color(hex: face.deep).opacity(0.3)
             ctx.fill(Circle().path(in: CGRect(x: 14, y: 37, width: 6, height: 6)), with: .color(deep))

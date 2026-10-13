@@ -70,6 +70,63 @@ final class Brain: ObservableObject {
         var text: String
         let at: String
         var error: String?
+        /// Technical detail behind `error`, shown only on request.
+        var detail: String?
+        /// Set when a routine posted this prompt.
+        var routine: RoutineRef?
+
+        struct RoutineRef: Decodable, Hashable { let id: String; let name: String }
+    }
+
+    /// Mirrors brain/src/routines/schedule.ts.
+    enum Schedule: Codable, Hashable {
+        case interval(every: Int, unit: String)            // "minutes" | "hours"
+        case daily(time: String, days: [Int])               // "HH:MM", 0=Sun…6=Sat
+        case once(at: Date)
+
+        private enum Keys: String, CodingKey { case kind, every, unit, time, days, at }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            switch try c.decode(String.self, forKey: .kind) {
+            case "interval": self = .interval(every: try c.decode(Int.self, forKey: .every), unit: try c.decode(String.self, forKey: .unit))
+            case "daily": self = .daily(time: try c.decode(String.self, forKey: .time), days: try c.decode([Int].self, forKey: .days))
+            default:
+                let iso = try c.decode(String.self, forKey: .at)
+                self = .once(at: ISO8601DateFormatter.withFractions.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) ?? .now)
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: Keys.self)
+            switch self {
+            case .interval(let every, let unit):
+                try c.encode("interval", forKey: .kind); try c.encode(every, forKey: .every); try c.encode(unit, forKey: .unit)
+            case .daily(let time, let days):
+                try c.encode("daily", forKey: .kind); try c.encode(time, forKey: .time); try c.encode(days, forKey: .days)
+            case .once(let at):
+                try c.encode("once", forKey: .kind); try c.encode(ISO8601DateFormatter().string(from: at), forKey: .at)
+            }
+        }
+
+        var json: [String: Any] {
+            let data = (try? JSONEncoder().encode(self)) ?? Data()
+            return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        }
+    }
+
+    struct Routine: Decodable, Identifiable, Hashable {
+        let id: String
+        let botId: String
+        let name: String
+        let task: String
+        let schedule: Schedule
+        let enabled: Bool
+        let nextRunAt: String?
+        let lastRunAt: String?
+        let lastStatus: String?      // ok | failed | running | skipped
+        let lastError: String?
+        let scheduleText: String
     }
 
     struct ProviderStatus: Decodable {
@@ -124,6 +181,7 @@ final class Brain: ObservableObject {
     @Published private(set) var bots: [Bot] = []
     @Published private(set) var messages: [String: [Message]] = [:]
     @Published private(set) var thinking: Set<String> = []
+    @Published private(set) var routines: [Routine] = []
     @Published private(set) var providerStatus: ProviderStatus?
     /// Model lists per provider id.
     @Published private(set) var models: [String: [Model]] = [:]
@@ -179,6 +237,7 @@ final class Brain: ObservableObject {
             Task {
                 await refreshBots()
                 await refreshProviders()
+                await refreshRoutines()
                 // Computers change outside the app too (docker, lume); poll for state.
                 while !Task.isCancelled && self.connected {
                     await refreshComputers()
@@ -308,6 +367,7 @@ final class Brain: ObservableObject {
     struct AvatarOptions: Decodable {
         let value: String
         let svg: String
+        let face: Face
         let colors: [AvatarOption]
         let eyes: [AvatarOption]
         let mouths: [AvatarOption]
@@ -325,6 +385,40 @@ final class Brain: ObservableObject {
 
     func previewAvatar(seed: String) async -> String? {
         try? await request("bots.previewAvatar", ["seed": seed])
+    }
+
+    // MARK: Routines
+
+    func refreshRoutines() async {
+        if let list: [Routine] = try? await request("routines.list") { routines = list }
+    }
+
+    func saveRoutine(id: String?, botId: String, name: String, task: String, schedule: Schedule, enabled: Bool) async -> Bool {
+        do {
+            var params: [String: Any] = ["name": name, "task": task, "schedule": schedule.json, "enabled": enabled]
+            if let id { params["id"] = id } else { params["botId"] = botId }
+            _ = try await call(id == nil ? "routines.create" : "routines.update", params)
+            await refreshRoutines()
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func setRoutineEnabled(_ id: String, _ enabled: Bool) async {
+        await perform("routines.update", ["id": id, "enabled": enabled])
+        await refreshRoutines()
+    }
+
+    func runRoutineNow(_ id: String) async {
+        await perform("routines.runNow", ["id": id])
+        await refreshRoutines()
+    }
+
+    func deleteRoutine(_ id: String) async {
+        await perform("routines.delete", ["id": id])
+        await refreshRoutines()
     }
 
     // MARK: Chat
@@ -473,10 +567,21 @@ final class Brain: ObservableObject {
             Task { await refreshBots(); await refreshComputers() }
         case "computers":
             Task { await refreshComputers() }
+        case "routines":
+            Task { await refreshRoutines() }
         case "providers":
             Task { await refreshProviders() }
         default:
             break
         }
     }
+}
+
+extension ISO8601DateFormatter {
+    /// The brain writes dates with milliseconds (JavaScript's toISOString).
+    static let withFractions: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }
