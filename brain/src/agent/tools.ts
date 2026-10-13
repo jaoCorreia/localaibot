@@ -1,0 +1,143 @@
+import type { ToolSpec } from "../chat/types.ts";
+import type { Hands } from "../hands/types.ts";
+
+/**
+ * Computer tools offered to the model. Coordinates are pixels of the latest
+ * screenshot. After any GUI action the loop attaches a fresh screenshot, so
+ * the model always sees the result of what it did.
+ */
+const point = {
+  x: { type: "number", description: "X coordinate in screenshot pixels" },
+  y: { type: "number", description: "Y coordinate in screenshot pixels" },
+};
+
+export const COMPUTER_TOOLS: ToolSpec[] = [
+  {
+    name: "screenshot",
+    description: "Captures the whole device screen.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "click",
+    description: "Clicks a point on the screen.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...point,
+        button: { type: "string", enum: ["left", "right", "middle"] },
+        double: { type: "boolean", description: "Double click" },
+      },
+      required: ["x", "y"],
+    },
+  },
+  {
+    name: "type_text",
+    description: "Types text into the focused element (click the field first).",
+    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+  },
+  {
+    name: "press_key",
+    description: "Presses one key, e.g. Return, Tab, Escape, BackSpace, Down, Page_Down.",
+    parameters: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+  },
+  {
+    name: "hotkey",
+    description: "Presses a key combination, e.g. [\"ctrl\",\"l\"] (address bar) or [\"ctrl\",\"t\"] (new tab).",
+    parameters: {
+      type: "object",
+      properties: { keys: { type: "array", items: { type: "string" } } },
+      required: ["keys"],
+    },
+  },
+  {
+    name: "scroll",
+    description: "Scrolls at a point on the screen.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...point,
+        direction: { type: "string", enum: ["up", "down", "left", "right"] },
+        amount: { type: "integer", minimum: 1, maximum: 20 },
+      },
+      required: ["x", "y", "direction"],
+    },
+  },
+  {
+    name: "open_app",
+    description: "Opens an app, optionally with URLs or files. E.g. name=\"firefox-esr\", urls=[\"https://google.com\"].",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string" }, urls: { type: "array", items: { type: "string" } } },
+      required: ["name"],
+    },
+  },
+  {
+    name: "shell",
+    description: "Runs a bash command on the device and returns its output. Use it for files, downloads and scripts, not to open GUI apps.",
+    parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
+  },
+  {
+    name: "wait",
+    description: "Waits a few seconds (page loading, etc.).",
+    parameters: { type: "object", properties: { seconds: { type: "number", minimum: 1, maximum: 15 } }, required: ["seconds"] },
+  },
+];
+
+export interface ToolOutcome {
+  /** Text sent back to the model as the tool result. */
+  result: string;
+  /** Human-readable line shown in the chat. */
+  activity: string;
+  /** Whether the screen probably changed (attach a fresh screenshot). */
+  visual: boolean;
+}
+
+const MAX_SHELL_OUTPUT = 6000;
+
+export async function runTool(hands: Hands, name: string, rawArgs: string): Promise<ToolOutcome> {
+  let a: any;
+  try {
+    a = rawArgs ? JSON.parse(rawArgs) : {};
+  } catch {
+    return { result: `Invalid arguments: ${rawArgs}`, activity: `Invalid arguments for ${name}`, visual: false };
+  }
+  const done = (activity: string) => ({ result: "ok", activity, visual: true });
+
+  switch (name) {
+    case "screenshot":
+      return { result: "Screenshot attached.", activity: "Looked at the screen", visual: true };
+    case "click":
+      await hands.act("click", { x: a.x, y: a.y, button: a.button ?? "left", ...(a.double ? { count: 2 } : {}) });
+      return done(`${a.double ? "Double-clicked" : "Clicked"} at (${Math.round(a.x)}, ${Math.round(a.y)})`);
+    case "type_text":
+      await hands.act("type_text", { text: String(a.text) });
+      return done(`Typed “${String(a.text).slice(0, 60)}”`);
+    case "press_key":
+      await hands.act("press_key", { key: String(a.key) });
+      return done(`Pressed ${a.key}`);
+    case "hotkey":
+      await hands.act("hotkey", { keys: a.keys });
+      return done(`Pressed ${(a.keys ?? []).join("+")}`);
+    case "scroll":
+      await hands.act("scroll", { x: a.x, y: a.y, direction: a.direction, amount: a.amount ?? 5 });
+      return done(`Scrolled ${a.direction}`);
+    case "open_app":
+      await hands.act("launch_app", { name: String(a.name), ...(a.urls?.length ? { urls: a.urls } : {}) });
+      await new Promise((r) => setTimeout(r, 2500));
+      return done(`Opened ${a.name}${a.urls?.length ? ` at ${a.urls[0]}` : ""}`);
+    case "shell": {
+      const { code, output } = await hands.shell(String(a.command));
+      const trimmed = output.length > MAX_SHELL_OUTPUT ? `${output.slice(0, MAX_SHELL_OUTPUT)}\n…(output truncated)` : output;
+      return {
+        result: `exit ${code}\n${trimmed || "(no output)"}`,
+        activity: `Ran: ${String(a.command).slice(0, 80)}`,
+        visual: false,
+      };
+    }
+    case "wait":
+      await new Promise((r) => setTimeout(r, Math.min(15, Math.max(1, Number(a.seconds) || 2)) * 1000));
+      return done(`Waited ${a.seconds}s`);
+    default:
+      return { result: `Unknown tool: ${name}`, activity: `Unknown tool: ${name}`, visual: false };
+  }
+}

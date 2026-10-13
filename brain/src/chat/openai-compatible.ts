@@ -1,0 +1,114 @@
+import type { ChatProvider, ChatRequest, ChatResult, ModelInfo, ToolCall } from "./types.ts";
+
+export interface OpenAICompatibleOptions {
+  id: string;
+  label: string;
+  baseURL: string;
+  apiKey: () => string | undefined;
+  /** Extra headers, e.g. OpenRouter's app attribution. */
+  headers?: Record<string, string>;
+  /** Local servers (Ollama, LM Studio) need no key. */
+  keyless?: boolean;
+}
+
+/**
+ * Any server speaking the OpenAI Chat Completions API: OpenRouter, OpenAI,
+ * Groq, Ollama, LM Studio, vLLM… One implementation, many providers.
+ */
+export class OpenAICompatibleProvider implements ChatProvider {
+  readonly id: string;
+  readonly label: string;
+  private modelCache?: { at: number; list: ModelInfo[] };
+
+  constructor(private opts: OpenAICompatibleOptions) {
+    this.id = opts.id;
+    this.label = opts.label;
+  }
+
+  configured() {
+    return this.opts.keyless || !!this.opts.apiKey();
+  }
+
+  private headers() {
+    const key = this.opts.apiKey();
+    return {
+      "Content-Type": "application/json",
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      ...this.opts.headers,
+    };
+  }
+
+  async models(fresh = false): Promise<ModelInfo[]> {
+    if (!fresh && this.modelCache && Date.now() - this.modelCache.at < 10 * 60_000) return this.modelCache.list;
+    if (!this.configured()) throw new Error(`${this.label} has no API key`);
+    const res = await fetch(`${this.opts.baseURL}/models`, { headers: this.headers(), signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`${this.label}: listing models failed (${res.status})`);
+    const body = (await res.json()) as { data?: { id: string; name?: string; display_name?: string; context_length?: number }[] };
+    const list = (body.data ?? [])
+      .map((m) => ({ id: m.id, name: m.name ?? m.display_name ?? m.id, contextLength: m.context_length }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    this.modelCache = { at: Date.now(), list };
+    return list;
+  }
+
+  async chat({ model, messages, tools, signal, onDelta }: ChatRequest): Promise<ChatResult> {
+    if (!this.configured()) throw new Error(`${this.label} has no API key`);
+    const res = await fetch(`${this.opts.baseURL}/chat/completions`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(tools?.length
+          ? { tools: tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" }
+          : {}),
+      }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`${this.label} returned ${res.status}: ${detail.slice(0, 300)}`);
+    }
+
+    // Server-sent events: lines of `data: {json}`, ending with `data: [DONE]`.
+    // Tool calls arrive in fragments keyed by index; arguments are concatenated.
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    const calls: ToolCall[] = [];
+    const done = () => ({ text, toolCalls: calls.filter((c) => c.name) });
+
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith("data:")) continue; // comments like ": OPENROUTER PROCESSING"
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") return done();
+        let event: any;
+        try {
+          event = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        if (event.error) throw new Error(event.error.message ?? JSON.stringify(event.error));
+        const delta = event.choices?.[0]?.delta;
+        if (delta?.content) {
+          text += delta.content;
+          onDelta(delta.content);
+        }
+        for (const tc of delta?.tool_calls ?? []) {
+          const i = tc.index ?? calls.length;
+          calls[i] ??= { id: "", name: "", arguments: "" };
+          if (tc.id) calls[i].id = tc.id;
+          if (tc.function?.name) calls[i].name += tc.function.name;
+          if (tc.function?.arguments) calls[i].arguments += tc.function.arguments;
+        }
+      }
+    }
+    return done();
+  }
+}

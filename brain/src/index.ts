@@ -1,0 +1,204 @@
+import { createInterface } from "node:readline";
+import { avatarOptions, avatarSVG, randomAvatar } from "./bots/avatar.ts";
+import { Bots } from "./bots/bots.ts";
+import { Conversations } from "./chat/conversations.ts";
+import { addProvider, provider, providerStatus, removeProvider, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
+import { DockerProvider } from "./computers/docker.ts";
+import { LumeProvider } from "./computers/lume.ts";
+import type { ComputerProvider } from "./computers/types.ts";
+
+/**
+ * Brain entry point. Protocol with the shell: one JSON object per line on stdio.
+ *   request  {id, method, params}  ->  {id, result} | {id, error}
+ *   event    {event, data}          (brain -> shell, unsolicited)
+ * stdout is reserved for the protocol; logs go to stderr.
+ */
+const computerProviders: ComputerProvider[] = [new DockerProvider(), new LumeProvider()];
+
+function emit(event: string, data: unknown) {
+  process.stdout.write(JSON.stringify({ event, data }) + "\n");
+}
+
+const log = (...args: unknown[]) => console.error("[brain]", ...args);
+
+function computerProvider(id: string) {
+  const p = computerProviders.find((x) => id.startsWith(`${x.name}:`));
+  if (!p) throw new Error(`Unknown device: ${id}`);
+  return p;
+}
+
+const bots = new Bots();
+
+/** A bot works on its own computer first, then on any computer it was granted. */
+const conversations = new Conversations(emit, async (bot) => {
+  const view = bots.list().find((b) => b.id === bot.id);
+  const accesses = [...(view?.computers ?? [])].sort((a, b) => (a.role === "owner" ? -1 : b.role === "owner" ? 1 : 0));
+  for (const access of accesses) {
+    const p = computerProvider(access.computerId);
+    const hands = await p.hands?.(access.computerId, `bot-${bot.id.slice(0, 8)}`);
+    if (!hands) continue;
+    const computer = (await p.list()).find((c) => c.id === access.computerId);
+    return { hands, computerName: computer?.name ?? access.computerId };
+  }
+  return null;
+});
+
+const botsChanged = () => emit("bots", null);
+
+type Handler = (params: any) => unknown | Promise<unknown>;
+
+const methods: Record<string, Handler> = {
+  // Computers
+  "computers.list": async () => {
+    const usable = await Promise.all(computerProviders.map(async (p) => ((await p.available()) ? p : null)));
+    const lists = await Promise.all(usable.filter((p): p is ComputerProvider => !!p).map((p) => p.list()));
+    return lists.flat().map((c) => ({ ...c, bots: bots.botsOn(c.id) }));
+  },
+  /** What kinds of device can be added on this host (and what is coming). */
+  "computers.kinds": async () => {
+    const [docker, lume] = await Promise.all(computerProviders.map((p) => p.available()));
+    return [
+      { id: "docker", label: "Linux desktop", detail: "Debian + XFCE + Firefox in a container. Starts in seconds, ~1 GB.", available: docker, reason: docker ? null : "Docker isn’t running" },
+      { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: lume, reason: lume ? null : "Needs an Apple silicon Mac" },
+      { id: "ios-simulator", label: "iOS Simulator", detail: "Drive iPhone and iPad apps.", available: false, reason: "Coming soon" },
+      { id: "android-emulator", label: "Android Emulator", detail: "Drive Android apps.", available: false, reason: "Coming soon" },
+      { id: "remote", label: "Another computer", detail: "Pair a Mac, Windows or Linux machine over the network.", available: false, reason: "Coming soon" },
+    ];
+  },
+  "computers.create": async ({ kind, name }) => {
+    const p = computerProviders.find((x) => x.name === kind);
+    if (!p?.create) throw new Error(`Can’t create ${kind} devices yet`);
+    if (!String(name ?? "").trim()) throw new Error("The device needs a name");
+    const id = await p.create(String(name).trim());
+    emit("computers", null);
+    return { id };
+  },
+  "computers.remove": async ({ id }) => {
+    const p = computerProvider(id);
+    if (!p.remove) throw new Error(`${p.name} devices can’t be removed from here`);
+    await p.remove(id);
+    for (const bot of bots.list()) bots.revoke(bot.id, id);
+    emit("computers", null);
+    botsChanged();
+  },
+  "computers.start": async ({ id }) => {
+    const p = computerProvider(id);
+    if (!p.start) throw new Error(`${p.name} devices are started by the app`);
+    await p.start(id);
+    emit("computers", null);
+  },
+  "computers.stop": async ({ id }) => {
+    const p = computerProvider(id);
+    if (!p.stop) throw new Error(`${p.name} devices are stopped by the app`);
+    await p.stop(id);
+    emit("computers", null);
+  },
+
+  // Bots
+  "bots.list": () => bots.list().map((b) => ({ ...b, status: conversations.isBusy(b.id) ? "thinking" : "idle" })),
+  "bots.create": (p) => {
+    const bot = bots.create({
+      ...p,
+      provider: p.provider || settings.value.defaultProvider,
+      model: p.model || settings.value.defaultModel,
+    });
+    botsChanged();
+    return bot;
+  },
+  "bots.update": ({ id, ...patch }) => {
+    const bot = bots.update(id, patch);
+    botsChanged();
+    return bot;
+  },
+  "bots.previewAvatar": ({ seed }) => avatarSVG(String(seed)),
+  /** Every catalog option rendered on top of the given face (for the picker). */
+  "bots.avatarOptions": ({ value }) => avatarOptions(String(value || randomAvatar())),
+  "bots.randomAvatar": () => randomAvatar(),
+  "bots.regenerateAvatar": ({ id }) => {
+    const bot = bots.regenerateAvatar(id);
+    botsChanged();
+    return bot;
+  },
+  "bots.delete": ({ id }) => {
+    conversations.clear(id);
+    bots.delete(id);
+    botsChanged();
+  },
+
+  // Access between bots and computers
+  "access.grant": (p) => {
+    const access = bots.grant({ grantedBy: "user", ...p });
+    botsChanged();
+    return access;
+  },
+  "access.revoke": ({ botId, computerId }) => {
+    bots.revoke(botId, computerId);
+    botsChanged();
+  },
+
+  // Chat
+  "chat.history": ({ botId }) => conversations.history(botId),
+  "chat.send": ({ botId, text }) => conversations.send(bots.get(botId), text),
+  "chat.stop": ({ botId }) => conversations.stop(botId),
+  "chat.clear": ({ botId }) => conversations.clear(botId),
+
+  // Conversation providers (keys never leave the brain)
+  "providers.status": () => providerStatus(),
+  "providers.add": (p) => {
+    const id = addProvider(p);
+    emit("providers", null);
+    return { id, ...providerStatus() };
+  },
+  "providers.update": ({ id, ...patch }) => {
+    updateProvider(id, patch);
+    emit("providers", null);
+    return providerStatus();
+  },
+  "providers.remove": ({ id }) => {
+    removeProvider(id);
+    emit("providers", null);
+    return providerStatus();
+  },
+  "providers.test": ({ id }) => testProvider(id),
+  "providers.models": ({ provider: id }) => provider(id ?? settings.value.defaultProvider).models(),
+  "providers.setDefault": ({ provider: id, model }) => {
+    setDefault(id, model);
+    emit("providers", null);
+    return providerStatus();
+  },
+
+  ping: () => "pong",
+};
+
+const inFlight = new Set<Promise<void>>();
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const task = handle(line);
+  inFlight.add(task);
+  task.finally(() => inFlight.delete(task));
+});
+// The shell closing stdin means shutdown; finish in-flight requests first.
+rl.on("close", async () => {
+  await Promise.allSettled(inFlight);
+  process.exit(0);
+});
+
+async function handle(line: string) {
+  if (!line.trim()) return;
+  let req: { id: number; method: string; params?: unknown };
+  try {
+    req = JSON.parse(line);
+  } catch {
+    return log("invalid line:", line);
+  }
+  const reply = (body: object) => process.stdout.write(JSON.stringify({ id: req.id, ...body }) + "\n");
+  const handler = methods[req.method];
+  try {
+    if (!handler) throw new Error(`Unknown method: ${req.method}`);
+    reply({ result: (await handler(req.params ?? {})) ?? null });
+  } catch (err) {
+    reply({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+log("ready");

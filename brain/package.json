@@ -1,0 +1,18 @@
+{
+  "name": "@local-bot/brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform brain for Local Bot: bots, chat, computers and hands. Shells (macOS app today, Windows/Linux later) talk to it over JSON lines on stdio.",
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

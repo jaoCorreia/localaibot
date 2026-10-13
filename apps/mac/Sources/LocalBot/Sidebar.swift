@@ -1,0 +1,150 @@
+import SwiftUI
+
+struct Sidebar: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var brain: Brain
+    @State private var removing: Brain.Computer?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Title-bar row: the traffic lights sit on the left of it.
+            HStack(spacing: 6) {
+                Spacer()
+                PanelToggle(side: .leading)
+            }
+            // Centers the toggle on the same vertical line as the section "+" buttons.
+            .padding(.trailing, 8)
+            .frame(height: titleBarHeight)
+            .dragsWindow()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    section("Bots", action: ("plus", "New bot", { model.sheet = .newBot })) {
+                        if brain.bots.isEmpty {
+                            Button { model.sheet = .newBot } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                                        .frame(width: 28, height: 28)
+                                        .background(RoundedRectangle(cornerRadius: 7).stroke(Theme.border, style: .init(dash: [3])))
+                                    Text("Create bot").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                                    Spacer()
+                                }
+                                .padding(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        ForEach(brain.bots) { bot in
+                            Row(selected: model.selection == .bot(bot.id)) {
+                                AnimatedFace(face: bot.face, size: 28, working: brain.thinking.contains(bot.id), seed: bot.id)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(bot.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    Text(brain.thinking.contains(bot.id) ? "Working…" : (bot.role.isEmpty ? "Bot" : bot.role))
+                                        .font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                                if brain.thinking.contains(bot.id) { ProgressView().controlSize(.mini) }
+                            } action: {
+                                model.selection = .bot(bot.id)
+                            }
+                            .contextMenu {
+                                Button("Settings…") { model.sheet = .editBot(bot.id) }
+                                Button("New face") { Task { await brain.regenerateAvatar(bot.id) } }
+                            }
+                        }
+                    }
+
+                    section("Devices", action: ("plus", "Add device", { model.sheet = .newDevice })) {
+                        ForEach(brain.computers) { computer in
+                            Row(selected: model.selection == .computer(computer.id)) {
+                                Image(systemName: computer.os == "macos" ? "apple.logo" : "terminal")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                                    .frame(width: 28, height: 28)
+                                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.surface))
+                                    .hairline(7)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(computer.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    Text(subtitle(computer)).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                                Circle().fill(stateColor(computer.state)).frame(width: 6, height: 6)
+                            } action: {
+                                model.selection = .computer(computer.id)
+                            }
+                            .contextMenu {
+                                Button("Remove device…", role: .destructive) { removing = computer }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .thinScrollers()
+            }
+            .fadesUnderTopBar(Theme.sidebar, height: 12)
+
+            Spacer(minLength: 0)
+            HStack {
+                ToolbarButton(systemImage: "gearshape", help: "Settings") { model.sheet = .settings }
+                    .overlay(alignment: .topTrailing) {
+                        // Nudge when no AI provider is ready (or the brain is down).
+                        if !brain.connected || brain.providerStatus?.configured != true {
+                            Circle().fill(brain.connected ? Theme.warn : Theme.danger)
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().stroke(Theme.sidebar, lineWidth: 2))
+                                .offset(x: 1, y: -1)
+                        }
+                    }
+                Spacer()
+            }
+            .padding(12)
+        }
+        .background(Theme.sidebar)
+        .confirmationDialog("Remove \(removing?.name ?? "device")?", isPresented: Binding(
+            get: { removing != nil }, set: { if !$0 { removing = nil } })
+        ) {
+            Button("Remove device", role: .destructive) {
+                guard let device = removing else { return }
+                Task { await brain.removeDevice(device.id) }
+            }
+        } message: {
+            Text("Everything on it is deleted: files, logins and installed apps. Bots using it lose access.")
+        }
+    }
+
+    private func subtitle(_ c: Brain.Computer) -> String {
+        let bots = c.bots.count
+        return "\(c.osLabel) · \(stateLabel(c.state))" + (bots > 0 ? " · \(bots) bot\(bots == 1 ? "" : "s")" : "")
+    }
+
+    @ViewBuilder
+    private func section<Content: View>(_ title: String, action: (String, String, () -> Void)? = nil,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6)
+                    .foregroundStyle(Theme.tertiary)
+                Spacer()
+                if let action { IconButton(systemImage: action.0, help: action.1, action: action.2) }
+            }
+            .padding(.leading, 8).padding(.trailing, 2).frame(height: 30)
+            content()
+        }
+    }
+}
+
+struct Row<Content: View>: View {
+    let selected: Bool
+    @ViewBuilder let content: Content
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) { content }
+                .padding(.horizontal, 6).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Theme.raised : (hovering ? Theme.surface : .clear)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
