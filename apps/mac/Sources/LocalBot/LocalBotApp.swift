@@ -34,6 +34,7 @@ enum Sheet: Identifiable {
     case shareDevice(String)   // device id
     case routine(botID: String, routineID: String?)
     case onboarding
+    case update
 
     var id: String {
         switch self {
@@ -42,6 +43,7 @@ enum Sheet: Identifiable {
         case .shareDevice(let id): return "share-\(id)"
         case .routine(let bot, let routine): return "routine-\(bot)-\(routine ?? "new")"
         case .onboarding: return "onboarding"
+        case .update: return "update"
         case .newBot: return "new"
         case .editBot(let id): return "edit-\(id)"
         case .settings: return "settings"
@@ -52,6 +54,7 @@ enum Sheet: Identifiable {
 @MainActor
 final class AppModel: ObservableObject {
     let brain = Brain()
+    let updater = Updater()
     @Published var selection: Selection?
     @Published var sheet: Sheet?
     @Published var showSidebar = true
@@ -100,7 +103,7 @@ struct MainView: View {
     var body: some View {
         HStack(spacing: 0) {
             if model.showSidebar {
-                Sidebar(model: model, brain: brain)
+                Sidebar(model: model, brain: brain, updater: model.updater)
                     .frame(width: sidebarWidth)
                     .transition(.move(edge: .leading))
                 ResizeHandle(width: $sidebarWidth, range: 200...380, defaultWidth: 248, edge: .leading)
@@ -122,7 +125,15 @@ struct MainView: View {
         .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Theme.text)
         .tint(Theme.text)
-        .onAppear { brain.start() }
+        .onAppear {
+            brain.start()
+            model.updater.start { release in
+                // Don't cover onboarding or another sheet; the sidebar still shows it.
+                guard model.updater.shouldPrompt(release), model.sheet == nil else { return }
+                model.updater.markPrompted(release)
+                model.sheet = .update
+            }
+        }
         .task {
             // First run only: decide after the brain has reported everything, and
             // only for a truly empty setup (no AI provider and no bots).
@@ -146,6 +157,7 @@ struct MainView: View {
             case .newDevice: NewDeviceSheet(model: model, brain: brain)
             case .addBots(let id): AddBotsSheet(model: model, brain: brain, deviceID: id)
             case .shareDevice(let id): ShareDeviceSheet(brain: brain, deviceID: id)
+            case .update: UpdateSheet(updater: model.updater)
             case .routine(let bot, let routine): RoutineEditor(brain: brain, botID: bot, routineID: routine)
             }
         }
