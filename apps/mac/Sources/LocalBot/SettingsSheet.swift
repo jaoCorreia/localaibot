@@ -76,6 +76,10 @@ struct SettingsSheet: View {
                 }
             }
             Spacer()
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                .textSelection(.enabled)
+                .padding(.leading, 12).padding(.bottom, 14)
         }
         .padding(.horizontal, 8)
     }
