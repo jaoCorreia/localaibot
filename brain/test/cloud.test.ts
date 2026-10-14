@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { CloudLink } from "../src/cloud/link.ts";
+import { CloudLink, secureURL } from "../src/cloud/link.ts";
 
 test("cloud RPC remains usable while authenticated events stream on a dedicated socket", async () => {
   const token = "cloud-test-token-123456";
@@ -49,4 +49,13 @@ test("cloud RPC remains usable while authenticated events stream on a dedicated 
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("cloud brain links only over https, or http to this machine", () => {
+  assert.equal(secureURL("https://brain.example.com"), true);
+  assert.equal(secureURL("http://127.0.0.1:8080"), true);
+  assert.equal(secureURL("http://localhost:8080"), true);
+  assert.equal(secureURL("http://brain.example.com"), false);
+  assert.equal(secureURL("http://127.0.0.1.evil.com"), false);
+  assert.equal(secureURL("not a url"), false);
 });

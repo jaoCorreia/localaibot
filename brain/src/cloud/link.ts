@@ -64,6 +64,8 @@ export class CloudLink {
   /** Checks the brain answers with this token, then keeps both. */
   async connect(url: string, token: string, railwayServiceId?: string) {
     const clean = url.trim().replace(/\/+$/, "");
+    // The token and, when bots move, API keys travel over this link.
+    if (!secureURL(clean)) throw new Error("The cloud brain needs an https:// address");
     await call(clean, token, "ping", {}).catch((err) => { throw new Error(`Couldn’t reach the cloud brain: ${err.message}`); });
     await secrets.set(TOKEN_ACCOUNT, token);
     this.record.upsert({ id: "brain", url: clean, railwayServiceId });
@@ -207,4 +209,15 @@ async function call(url: string, token: string, method: string, params: unknown)
   const body: any = await res.json();
   if (body.error) throw new Error(body.error);
   return body.result;
+}
+
+/** https, or plain http only to this machine (a brain run locally for testing). */
+export function secureURL(url: string) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === "https:") return true;
+    return u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  } catch {
+    return false;
+  }
 }

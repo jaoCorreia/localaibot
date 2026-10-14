@@ -7,9 +7,9 @@ import type { Computer, ComputerProvider, ComputerState } from "./types.ts";
 
 const API = "https://backboard.railway.com/graphql/v2";
 /** The device image (see /device). Override to test a build of your own. */
-const IMAGE = process.env.LOCALBOT_DEVICE_IMAGE ?? "ghcr.io/jaocorreia/localbot-device:latest";
+const IMAGE = process.env.LOCALBOT_DEVICE_IMAGE ?? "ghcr.io/patrick-mns/localbot-device:latest";
 /** The brain image (brain/Dockerfile) for bots that keep working while the Mac is off. */
-const BRAIN_IMAGE = process.env.LOCALBOT_BRAIN_IMAGE ?? "ghcr.io/jaocorreia/localbot-brain:latest";
+const BRAIN_IMAGE = process.env.LOCALBOT_BRAIN_IMAGE ?? "ghcr.io/patrick-mns/localbot-brain:latest";
 const PROJECT = "Local Bot";
 const TOKEN_ACCOUNT = "railway";
 

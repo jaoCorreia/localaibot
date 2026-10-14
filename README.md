@@ -121,7 +121,7 @@ those MCP tools can be a device, so new machine providers plug in the same way.
   docker run -d -p 8080:8080 --shm-size=1g \
     -e LOCALBOT_PUBLIC_URL=https://my-device.example.com \
     -e LOCALBOT_TOKEN=$(openssl rand -hex 24) -e VNC_PW=$(openssl rand -hex 6) \
-    ghcr.io/jaocorreia/localbot-device:latest
+    ghcr.io/patrick-mns/localbot-device:latest
   docker logs <container>   # prints the share code
   ```
 
