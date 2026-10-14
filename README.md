@@ -26,16 +26,41 @@ scripts/    dev helpers
 The shell starts the brain and talks to it over JSON lines on stdio. Logic
 lives in the brain so Windows/Linux shells can reuse it.
 
-## Run (macOS, Apple silicon)
+## Install
 
-Requirements: Node 22+, Swift 6, Docker Desktop. Optional: Lume for macOS VMs.
+Download `LocalBot-<version>.dmg` from
+[Releases](https://github.com/patrick-mns/local-bot/releases), open it and drag
+**Local Bot** to Applications.
+
+Requirements: a Mac with Apple silicon and macOS 14+, and
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) running
+(bots' Linux computers run in Docker).
+
+The app isn't signed with an Apple Developer ID yet, so the first time macOS
+blocks it: open **System Settings → Privacy & Security** and click
+**Open Anyway** next to "Local Bot" (or run
+`xattr -dr com.apple.quarantine "/Applications/Local Bot.app"`). After that it
+opens normally.
+
+On first launch a setup assistant connects an AI provider (your key goes to the
+macOS Keychain), creates a Linux device and your first bot.
+
+## Build from source (macOS, Apple silicon)
+
+Requirements: Node 22+, Swift 6 (Xcode 16), Docker Desktop.
 
 ```bash
-scripts/dev-mac.sh
+scripts/dev-mac.sh          # run from source
+(cd brain && npm run check) # typecheck + tests
+scripts/build-app.sh        # dist/Local Bot.app and dist/LocalBot-<version>.dmg
 ```
 
-Add an AI provider in Settings (or put `OPENROUTER_API_KEY=…` in
-`~/.local-bot/.env`), add a device with **+**, create a bot and give it a task.
+macOS VM devices (Lume) are experimental and off by default; set
+`LOCALBOT_EXPERIMENTAL_MACOS=1` to try them.
 
-Local state (bots, chats, keys, VNC password) lives in `~/.local-bot`, never in
-this repo.
+Local state (bots, chats, memory, routines) lives in `~/.local-bot`; API keys
+live in the macOS Keychain. Logs: `~/Library/Logs/LocalBot/brain.log`.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

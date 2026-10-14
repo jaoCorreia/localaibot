@@ -186,6 +186,8 @@ final class Brain: ObservableObject {
     }
 
     @Published private(set) var connected = false
+    /// True once bots, providers and routines have been read after startup.
+    @Published private(set) var loaded = false
     @Published private(set) var computers: [Computer] = []
     @Published private(set) var bots: [Bot] = []
     @Published private(set) var messages: [String: [Message]] = [:]
@@ -217,39 +219,63 @@ final class Brain: ObservableObject {
 
     // MARK: Lifecycle
 
+    private var restarts = 0
+    private var stopping = false
+
+    /// Where the brain's stderr goes: ~/Library/Logs/LocalBot/brain.log.
+    static let logURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs/LocalBot/brain.log")
+
+    /// The packaged app ships Node and a bundled brain in Resources; a dev
+    /// checkout runs the TypeScript sources through tsx.
+    private func launchCommand() -> (URL, [String], URL?) {
+        if let res = Bundle.main.resourceURL,
+           FileManager.default.fileExists(atPath: res.appendingPathComponent("node").path),
+           FileManager.default.fileExists(atPath: res.appendingPathComponent("brain/brain.mjs").path) {
+            return (res.appendingPathComponent("node"), [res.appendingPathComponent("brain/brain.mjs").path], nil)
+        }
+        // GUI apps don't inherit the login shell PATH; zsh -l finds node in a dev setup.
+        return (URL(fileURLWithPath: "/bin/zsh"), ["-lc", "exec node --import tsx src/index.ts"], brainDir)
+    }
+
     func start() {
         guard process == nil else { return }
         let p = Process()
-        // GUI apps don't inherit the login shell PATH; run through zsh -l to find node and docker.
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["-lc", "exec node --import tsx src/index.ts"]
-        p.currentDirectoryURL = brainDir
+        let (exe, args, cwd) = launchCommand()
+        p.executableURL = exe
+        p.arguments = args
+        if let cwd { p.currentDirectoryURL = cwd }
+        // Docker's CLI lives outside the default GUI PATH.
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = ["/usr/local/bin", "/opt/homebrew/bin", "/Applications/Docker.app/Contents/Resources/bin",
+                       env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"].joined(separator: ":")
+        env["NODE_NO_WARNINGS"] = "1"
+        p.environment = env
+
         let inPipe = Pipe(), outPipe = Pipe()
         p.standardInput = inPipe
         p.standardOutput = outPipe
-        p.standardError = FileHandle.standardError
+        p.standardError = Self.logHandle() ?? FileHandle.standardError
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             Task { @MainActor in self?.receive(data) }
         }
         p.terminationHandler = { [weak self] proc in
-            Task { @MainActor in
-                self?.connected = false
-                self?.process = nil
-                self?.lastError = "Brain exited (code \(proc.terminationStatus))"
-            }
+            Task { @MainActor in self?.brainExited(code: proc.terminationStatus) }
         }
         do {
             try p.run()
             process = p
             stdin = inPipe.fileHandleForWriting
             connected = true
+            lastError = nil
             Task {
                 await refreshBots()
                 await refreshProviders()
                 await refreshRoutines()
+                loaded = true
                 // Computers change outside the app too (docker, lume); poll for state.
-                while !Task.isCancelled && self.connected {
+                while !Task.isCancelled && self.connected && self.process === p {
                     await refreshComputers()
                     try? await Task.sleep(for: .seconds(4))
                 }
@@ -257,6 +283,45 @@ final class Brain: ObservableObject {
         } catch {
             lastError = "Couldn’t start the brain: \(error.localizedDescription)"
         }
+    }
+
+    func stop() {
+        stopping = true
+        process?.terminate()
+    }
+
+    /// Restarts a crashed brain a few times, backing off, before giving up.
+    private func brainExited(code: Int32) {
+        connected = false
+        process = nil
+        stdin = nil
+        for (_, cont) in pending { cont.resume(throwing: NSError(domain: "Brain", code: 3, userInfo: [NSLocalizedDescriptionKey: "Brain restarted"])) }
+        pending = [:]
+        guard !stopping else { return }
+        guard restarts < 5 else {
+            lastError = "The brain keeps stopping (code \(code)). See \(Self.logURL.path)."
+            return
+        }
+        restarts += 1
+        lastError = "The brain stopped (code \(code)); restarting…"
+        Task {
+            try? await Task.sleep(for: .seconds(Double(restarts) * 1.5))
+            self.start()
+        }
+    }
+
+    private static func logHandle() -> FileHandle? {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !fm.fileExists(atPath: logURL.path) { fm.createFile(atPath: logURL.path, contents: nil) }
+        // Keep the log from growing forever: start over past 5 MB.
+        if let size = (try? fm.attributesOfItem(atPath: logURL.path))?[.size] as? Int, size > 5_000_000 {
+            try? Data().write(to: logURL)
+        }
+        guard let h = try? FileHandle(forWritingTo: logURL) else { return nil }
+        h.seekToEndOfFile()
+        h.write(Data("\n--- \(Date()) brain starting ---\n".utf8))
+        return h
     }
 
     // MARK: Computers

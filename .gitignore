@@ -4,3 +4,5 @@ node_modules/
 .env
 *.env
 secrets.json
+dist/
+.build-cache/

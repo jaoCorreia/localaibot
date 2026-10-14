@@ -122,11 +122,14 @@ struct MainView: View {
         .tint(Theme.text)
         .onAppear { brain.start() }
         .task {
-            // First run: offer setup once the brain has reported what exists.
-            while brain.providerStatus == nil { try? await Task.sleep(for: .milliseconds(300)) }
-            try? await Task.sleep(for: .milliseconds(500))
-            let done = UserDefaults.standard.bool(forKey: "onboardingDone")
-            if !done && (brain.providerStatus?.configured != true || brain.bots.isEmpty), model.sheet == nil {
+            // First run only: decide after the brain has reported everything, and
+            // only for a truly empty setup (no AI provider and no bots).
+            while !brain.loaded { try? await Task.sleep(for: .milliseconds(200)) }
+            let defaults = UserDefaults.standard
+            if defaults.bool(forKey: "onboardingDone") { return }
+            if brain.providerStatus?.configured == true || !brain.bots.isEmpty {
+                defaults.set(true, forKey: "onboardingDone")
+            } else if model.sheet == nil {
                 model.sheet = .onboarding
             }
         }
