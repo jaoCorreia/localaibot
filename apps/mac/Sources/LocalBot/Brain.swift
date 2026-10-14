@@ -61,6 +61,10 @@ final class Brain: ObservableObject {
         let computers: [Access]
 
         var ownedComputer: String? { computers.first { $0.role == "owner" }?.computerId }
+        /// Where the bot works: its own device, else the first one it's a guest on
+        /// (the brain picks devices in this same order).
+        var workDevice: String? { ownedComputer ?? computers.first?.computerId }
+        var isGuestOnly: Bool { ownedComputer == nil && workDevice != nil }
     }
 
     struct Message: Decodable, Identifiable, Hashable {
@@ -74,6 +78,10 @@ final class Brain: ObservableObject {
         var detail: String?
         /// Set when a routine posted this prompt.
         var routine: RoutineRef?
+        /// Set when another bot sent this prompt (ask_bot).
+        var from: FromRef?
+
+        struct FromRef: Decodable, Hashable { let botId: String; let name: String }
 
         struct RoutineRef: Decodable, Hashable { let id: String; let name: String }
     }

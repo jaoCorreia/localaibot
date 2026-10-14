@@ -3,17 +3,16 @@ import SwiftUI
 struct Sidebar: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
-    @State private var removing: Brain.Computer?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Title-bar row: the traffic lights sit on the left of it.
+            // Title-bar row: traffic lights, then the sidebar toggle at a fixed
+            // spot that doesn't move when the sidebar hides.
             HStack(spacing: 6) {
-                Spacer()
                 PanelToggle(side: .leading)
+                Spacer()
             }
-            // Centers the toggle on the same vertical line as the section "+" buttons.
-            .padding(.trailing, 8)
+            .padding(.leading, sidebarToggleInset)
             .frame(height: titleBarHeight)
             .dragsWindow()
 
@@ -46,10 +45,7 @@ struct Sidebar: View {
                             } action: {
                                 model.selection = .bot(bot.id)
                             }
-                            .contextMenu {
-                                Button("Settings…") { model.sheet = .editBot(bot.id) }
-                                Button("New face") { Task { await brain.regenerateAvatar(bot.id) } }
-                            }
+                            .contextMenu { BotMenuItems(bot: bot) }
                         }
                     }
 
@@ -71,7 +67,9 @@ struct Sidebar: View {
                                 model.selection = .computer(computer.id)
                             }
                             .contextMenu {
-                                Button("Remove device…", role: .destructive) { removing = computer }
+                                Button("Add bots…") { model.sheet = .addBots(computer.id) }
+                                Divider()
+                                Button("Remove device…", role: .destructive) { model.removingDevice = computer }
                             }
                         }
                     }
@@ -98,16 +96,6 @@ struct Sidebar: View {
             .padding(12)
         }
         .background(Theme.sidebar)
-        .confirmationDialog("Remove \(removing?.name ?? "device")?", isPresented: Binding(
-            get: { removing != nil }, set: { if !$0 { removing = nil } })
-        ) {
-            Button("Remove device", role: .destructive) {
-                guard let device = removing else { return }
-                Task { await brain.removeDevice(device.id) }
-            }
-        } message: {
-            Text("Everything on it is deleted: files, logins and installed apps. Bots using it lose access.")
-        }
     }
 
     private func subtitle(_ c: Brain.Computer) -> String {

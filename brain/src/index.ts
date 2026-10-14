@@ -42,7 +42,7 @@ const conversations = new Conversations(emit, async (bot) => {
     return { hands, computerName: computer?.name ?? access.computerId };
   }
   return null;
-});
+}, () => bots.list());
 
 const botsChanged = () => emit("bots", null);
 

@@ -21,7 +21,9 @@ export const COLORS = {
 
 export const EYES = ["dot", "pill", "visor", "ring", "happy", "spark"] as const;
 export const MOUTHS = ["smile", "line", "dot", "o", "grin", "none"] as const;
-export const ACCESSORIES = ["none", "antenna", "antennae", "orbit", "cheeks"] as const;
+export const ACCESSORIES = ["none", "cheeks"] as const;
+/** Extras that were removed; faces that used them keep everything else. */
+const RETIRED_ACCESSORIES = ["antenna", "antennae", "orbit"];
 
 type Color = keyof typeof COLORS;
 export interface AvatarSpec {
@@ -34,7 +36,7 @@ export interface AvatarSpec {
 const PART_LABELS: Record<string, string> = {
   dot: "Dots", pill: "Pills", visor: "Visor", ring: "Rings", happy: "Happy", spark: "Sparks",
   smile: "Smile", line: "Line", o: "Oh", grin: "Grin", none: "None",
-  antenna: "Antenna", antennae: "Alien", orbit: "Orbit", cheeks: "Cheeks",
+  cheeks: "Cheeks",
 };
 
 /** mulberry32 seeded by an FNV-1a hash of the seed string. */
@@ -54,9 +56,9 @@ const pick = <T>(r: () => number, list: readonly T[]) => list[Math.floor(r() * l
 
 export function parseAvatar(value: string): AvatarSpec {
   const [v, color, eyes, mouth, accessory] = value.split(":");
-  if (v === "v1" && color in COLORS && (EYES as readonly string[]).includes(eyes)
-      && (MOUTHS as readonly string[]).includes(mouth) && (ACCESSORIES as readonly string[]).includes(accessory)) {
-    return { color, eyes, mouth, accessory } as AvatarSpec;
+  if (v === "v1" && color in COLORS && (EYES as readonly string[]).includes(eyes) && (MOUTHS as readonly string[]).includes(mouth)) {
+    if ((ACCESSORIES as readonly string[]).includes(accessory)) return { color, eyes, mouth, accessory } as AvatarSpec;
+    if (RETIRED_ACCESSORIES.includes(accessory)) return { color, eyes, mouth, accessory: "none" } as AvatarSpec;
   }
   const r = rng(value);
   return {
@@ -64,7 +66,7 @@ export function parseAvatar(value: string): AvatarSpec {
     eyes: pick(r, EYES),
     mouth: pick(r, MOUTHS),
     // Most random faces stay plain; accessories are a choice.
-    accessory: r() < 0.6 ? "none" : pick(r, ACCESSORIES),
+    accessory: r() < 0.75 ? "none" : "cheeks",
   };
 }
 
@@ -113,63 +115,18 @@ function mouth(kind: AvatarSpec["mouth"]) {
 }
 
 function accessory(kind: AvatarSpec["accessory"], deep: string) {
-  switch (kind) {
-    case "antenna":
-    case "antennae":
-      return ""; // drawn outside the head in renderAvatar
-    case "orbit":
-      return ""; // drawn around the planet in renderAvatar
-    case "cheeks":
-      return `<circle cx="17" cy="40" r="3" fill="${deep}" opacity="0.3"/><circle cx="47" cy="40" r="3" fill="${deep}" opacity="0.3"/>`;
-    case "none":
-      return "";
-  }
+  if (kind !== "cheeks") return "";
+  return `<circle cx="17" cy="40" r="3" fill="${deep}" opacity="0.3"/><circle cx="47" cy="40" r="3" fill="${deep}" opacity="0.3"/>`;
 }
 
 export function renderAvatar(spec: AvatarSpec): string {
   const c = COLORS[spec.color];
-  const face =
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
     `<circle cx="32" cy="32" r="32" fill="${c.fill}"/>` +
     accessory(spec.accessory, c.deep) +
     eyes(spec.eyes) +
-    mouth(spec.mouth);
-  if (spec.accessory === "antennae") {
-    // Two curved stalks leaning outward, like an alien.
-    const stalk = (side: 1 | -1) => {
-      const bx = 32 + side * 8, tx = 32 + side * 16;
-      return `<path d="M${bx} 16 Q${bx - side * 1} 8 ${tx} 6" fill="none" stroke="${c.fill}" stroke-width="2.6" stroke-linecap="round"/>` +
-        `<circle cx="${tx}" cy="6" r="3.6" fill="${c.fill}"/>`;
-    };
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-      stalk(-1) + stalk(1) +
-      `<g transform="translate(32 37.4) scale(0.8) translate(-32 -32)">${face}</g>` +
-      `</svg>`
-    );
-  }
-  if (spec.accessory === "antenna") {
-    // Head shrinks and drops so a springy antenna can stick out of the top.
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-      `<path d="M32 15 L32 6.5" stroke="${c.fill}" stroke-width="2.6" stroke-linecap="round"/>` +
-      `<circle cx="32" cy="5" r="4" fill="${c.fill}"/>` +
-      `<g transform="translate(32 37.4) scale(0.8) translate(-32 -32)">${face}</g>` +
-      `</svg>`
-    );
-  }
-  if (spec.accessory !== "orbit") {
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${face}</svg>`;
-  }
-  // Planet with a ring outside it: the far half of the ring is drawn before
-  // the (shrunk) body so the body hides it; the near half is drawn on top.
-  // The ring sits low (below the mouth) so its near half never crosses the face.
-  const ring = (sweep: 0 | 1) =>
-    `<g transform="translate(32 40) rotate(-14)"><path d="M-30 0 A30 7 0 0 ${sweep} 30 0" fill="none" stroke="${c.fill}" stroke-width="3" stroke-linecap="round"/></g>`;
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-    ring(1) +
-    `<g transform="translate(32 29) scale(0.68) translate(-32 -32)">${face}</g>` +
-    ring(0) +
+    mouth(spec.mouth) +
     `</svg>`
   );
 }

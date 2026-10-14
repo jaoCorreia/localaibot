@@ -83,6 +83,22 @@ export const COMPUTER_TOOLS: ToolSpec[] = [
   },
 ];
 
+/** Delegation between bots; offered whenever the bot has teammates. */
+export const ASK_BOT_TOOL: ToolSpec = {
+  name: "ask_bot",
+  description:
+    "Ask a teammate bot to do something and wait for its answer. Use it when the task fits a teammate's role better, " +
+    "or needs their device or logins. Give them a complete, self-contained request; you get their final reply back.",
+  parameters: {
+    type: "object",
+    properties: {
+      bot: { type: "string", description: "The teammate's name" },
+      message: { type: "string", description: "What you need from them, with all the context they need" },
+    },
+    required: ["bot", "message"],
+  },
+};
+
 export interface ToolOutcome {
   /** Text sent back to the model as the tool result. */
   result: string;

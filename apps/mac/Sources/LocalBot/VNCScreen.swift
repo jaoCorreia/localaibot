@@ -20,7 +20,14 @@ struct VNCScreen: NSViewRepresentable {
         #screen > div { background: transparent !important; }
         """
         let script = WKUserScript(
-            source: "const s=document.createElement('style');s.textContent=`\(css)`;document.documentElement.appendChild(s);",
+            // Watching (view_only): keep the Mac's own pointer. noVNC otherwise swaps it for
+            // the device's cursor image, which then doesn't follow the mouse.
+            source: """
+            const s = document.createElement('style');
+            s.textContent = `\(css)` + (location.search.includes('view_only')
+              ? '#screen, #screen * { cursor: default !important; }' : '');
+            document.documentElement.appendChild(s);
+            """,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )

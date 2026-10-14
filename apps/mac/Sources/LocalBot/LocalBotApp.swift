@@ -51,6 +51,11 @@ final class AppModel: ObservableObject {
     @Published var sheet: Sheet?
     @Published var showSidebar = true
     @Published var showChat = true
+    /// Device waiting for the user to confirm its removal.
+    @Published var removingDevice: Brain.Computer?
+    /// Bot waiting for the user to confirm its deletion, or its chat being cleared.
+    @Published var deletingBot: Brain.Bot?
+    @Published var clearingChat: Brain.Bot?
     /// Device preselected when "New bot" is opened from a device.
     var newBotDevice: String?
     /// macOS VMs are booted in-process; one host per Lume bundle.
@@ -76,21 +81,23 @@ struct ContentView: View {
 struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 248
+    @AppStorage("chatWidth") private var chatWidth: Double = 380
 
     var body: some View {
         HStack(spacing: 0) {
             if model.showSidebar {
                 Sidebar(model: model, brain: brain)
-                    .frame(width: 248)
+                    .frame(width: sidebarWidth)
                     .transition(.move(edge: .leading))
-                Rectangle().fill(Theme.border).frame(width: 1)
+                ResizeHandle(width: $sidebarWidth, range: 200...380, defaultWidth: 248, edge: .leading)
             }
             center
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if model.showChat {
-                Rectangle().fill(Theme.border).frame(width: 1)
+                ResizeHandle(width: $chatWidth, range: 300...620, defaultWidth: 380, edge: .trailing)
                 trailing
-                    .frame(width: 380)
+                    .frame(width: chatWidth)
                     .transition(.move(edge: .trailing))
             }
         }
@@ -116,14 +123,45 @@ struct MainView: View {
             }
         }
         .overlay(alignment: .bottom) { ErrorToast(brain: brain) }
+        .confirmationDialog("Remove \(model.removingDevice?.name ?? "device")?", isPresented: Binding(
+            get: { model.removingDevice != nil }, set: { if !$0 { model.removingDevice = nil } })
+        ) {
+            Button("Remove device", role: .destructive) {
+                guard let device = model.removingDevice else { return }
+                Task { await brain.removeDevice(device.id) }
+            }
+        } message: {
+            Text("Everything on it is deleted: files, logins and installed apps. Bots using it are disconnected; the bots themselves are kept.")
+        }
+        .confirmationDialog("Delete \(model.deletingBot?.name ?? "bot")?", isPresented: Binding(
+            get: { model.deletingBot != nil }, set: { if !$0 { model.deletingBot = nil } })
+        ) {
+            Button("Delete bot", role: .destructive) {
+                guard let bot = model.deletingBot else { return }
+                Task { await brain.deleteBot(bot.id) }
+            }
+        } message: {
+            Text("Its conversation and routines are deleted. Devices it used are not affected.")
+        }
+        .confirmationDialog("Clear the conversation with \(model.clearingChat?.name ?? "this bot")?", isPresented: Binding(
+            get: { model.clearingChat != nil }, set: { if !$0 { model.clearingChat = nil } })
+        ) {
+            Button("Clear conversation", role: .destructive) {
+                guard let bot = model.clearingChat else { return }
+                Task { await brain.clearChat(bot.id) }
+            }
+        } message: {
+            Text("All messages are removed. The bot, its device and routines stay.")
+        }
     }
 
     @ViewBuilder private var center: some View {
         switch model.selection {
         case .bot(let id):
             if let bot = brain.bots.first(where: { $0.id == id }) {
-                if let computer = brain.computers.first(where: { $0.id == bot.ownedComputer }) {
-                    ComputerStage(model: model, brain: brain, computer: computer, caption: "\(bot.name)’s device")
+                if let computer = brain.computers.first(where: { $0.id == bot.workDevice }) {
+                    ComputerStage(model: model, brain: brain, computer: computer,
+                                  caption: bot.isGuestOnly ? "\(bot.name) · shared device" : "\(bot.name)’s device")
                 } else {
                     VStack(spacing: 0) {
                         StageHeader(title: bot.name, subtitle: "No device", state: "stopped") { EmptyView() }

@@ -68,7 +68,7 @@ struct StageHeader<Actions: View>: View {
             HStack(spacing: 6) { actions }
             if !model.showChat { PanelToggle(side: .trailing) }
         }
-        .padding(.leading, model.showSidebar ? 16 : 84)
+        .padding(.leading, model.showSidebar ? 16 : sidebarToggleInset)
         .padding(.trailing, 12)
         .frame(height: titleBarHeight)
         .dragsWindow()
@@ -134,6 +134,7 @@ struct VNCStage: View {
                     Task { await brain.setPower(!running, computer: computer.id) }
                 }
                 .disabled(busy)
+                DeviceMenu(computer: computer)
             }
             Screen(highlighted: controlling) {
                 if running, let url = computer.display.url {
@@ -166,6 +167,7 @@ struct NativeVMStage: View {
                     PillButton(title: "Start", systemImage: "play.fill", prominent: true) { host.start() }
                         .disabled(!host.bundle.isReady || host.state == .starting || host.state == .stopping)
                 }
+                DeviceMenu(computer: computer, removeBlocked: host.state == .stopped || host.isFailed ? nil : "Shut it down first")
             }
             Screen {
                 if let vm = host.machine {
@@ -222,21 +224,52 @@ struct ComputerBots: View {
             VStack(spacing: 2) {
                 ForEach(bots) { bot in
                     let access = bot.computers.first { $0.computerId == computer.id }
-                    Row(selected: false) {
-                        AnimatedFace(face: bot.face, size: 28, working: brain.thinking.contains(bot.id), seed: bot.id)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(bot.name).font(.system(size: 13, weight: .medium))
-                            Text(access?.role == "owner" ? "Owner" : "Guest")
-                                .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                    // The row opens the bot's chat; the "⋯" next to it is a separate control.
+                    HStack(spacing: 4) {
+                        Row(selected: false) {
+                            AnimatedFace(face: bot.face, size: 28, working: brain.thinking.contains(bot.id), seed: bot.id)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(bot.name).font(.system(size: 13, weight: .medium))
+                                Text(access?.role == "owner" ? "Owner" : "Guest")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                            }
+                            Spacer()
+                        } action: {
+                            model.selection = .bot(bot.id)
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                    } action: {
-                        model.selection = .bot(bot.id)
+                        Menu {
+                            Button("Open chat") { model.selection = .bot(bot.id) }
+                            Divider()
+                            if access?.role == "owner" {
+                                Button("Make guest") { Task { await setRole(bot, "guest") } }
+                            } else {
+                                Button("Make owner") { Task { await setRole(bot, "owner") } }
+                            }
+                            Button("Disconnect from this device", role: .destructive) {
+                                Task {
+                                    await brain.revokeAccess(bot: bot.id, device: computer.id)
+                                    await brain.refreshBots()
+                                    await brain.refreshComputers()
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis").font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.secondary)
+                                .frame(width: 26, height: 26)
+                                .background(Circle().fill(Theme.raised.opacity(0.7)))
+                        }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .accessibilityLabel("\(bot.name) options")
                     }
                 }
             }
             .padding(.horizontal, 10).padding(.top, 8)
+
+            if bots.isEmpty {
+                Text("No bot uses this device yet. Add one to let it work here.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                    .padding(.horizontal, 18).padding(.top, 6)
+            }
 
             Spacer()
             PillButton(title: "Add bots to this device", systemImage: "plus") { model.sheet = .addBots(computer.id) }
@@ -244,5 +277,39 @@ struct ComputerBots: View {
                 .padding(18)
         }
         .background(Theme.sidebar)
+    }
+
+    private func setRole(_ bot: Brain.Bot, _ role: String) async {
+        await brain.grantAccess(bot: bot.id, device: computer.id, role: role)
+        await brain.refreshBots()
+        await brain.refreshComputers()
+    }
+}
+
+/// "⋯" for a device: manage bots, remove it.
+struct DeviceMenu: View {
+    @EnvironmentObject private var model: AppModel
+    let computer: Brain.Computer
+    /// Why removing isn't possible right now (e.g. a running VM), or nil.
+    var removeBlocked: String?
+
+    var body: some View {
+        Menu {
+            Button("Add bots…") { model.sheet = .addBots(computer.id) }
+            Divider()
+            if let removeBlocked {
+                Button("Remove device… (\(removeBlocked))") {}.disabled(true)
+            } else {
+                Button("Remove device…", role: .destructive) { model.removingDevice = computer }
+            }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Theme.raised.opacity(0.7)))
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+        .help("Device options")
+        .accessibilityLabel("Device options")
     }
 }

@@ -23,6 +23,8 @@ export type RoutineView = Routine & { scheduleText: string };
 export interface RunOutcome {
   ok: boolean;
   error?: string;
+  /** The bot's final reply text, when it finished with one. */
+  reply?: string;
 }
 
 type Runner = (routine: Routine) => Promise<RunOutcome>;

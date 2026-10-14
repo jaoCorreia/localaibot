@@ -12,7 +12,7 @@ struct ChatView: View {
 
     private var messages: [Brain.Message] { brain.messages[bot.id] ?? [] }
     private var deviceName: String {
-        brain.computers.first { $0.id == bot.ownedComputer }?.name ?? "the device"
+        brain.computers.first { $0.id == bot.workDevice }?.name ?? "the device"
     }
     private var thinking: Bool { brain.thinking.contains(bot.id) }
     private var ready: Bool { brain.providerStatus?.configured == true }
@@ -44,8 +44,7 @@ struct ChatView: View {
                 Text(bot.model).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             Spacer()
-            IconButton(systemImage: "trash", help: "Clear conversation") { Task { await brain.clearChat(bot.id) } }
-            IconButton(systemImage: "slider.horizontal.3", help: "Bot settings") { model.sheet = .editBot(bot.id) }
+            BotMenu(bot: bot)
             PanelToggle(side: .trailing)
         }
         .padding(.leading, 16).padding(.trailing, 12)
@@ -148,13 +147,19 @@ struct MessageRow: View {
                 Label("Routine · \(routine.name)", systemImage: "clock.arrow.circlepath")
                     .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.tertiary)
               }
+              if let from = message.from {
+                Label("From \(from.name)", systemImage: "arrow.turn.down.left")
+                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.tertiary)
+              }
               HStack {
                 Spacer(minLength: 48)
                 Text(message.text)
                     .font(.system(size: 13))
                     .textSelection(.enabled)
                     .padding(.horizontal, 13).padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.raised))
+                    // A teammate's request is outlined so it doesn't read as the user's own message.
+                    .background(RoundedRectangle(cornerRadius: 16).fill(message.from == nil ? Theme.raised : Theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(message.from == nil ? Color.clear : Theme.border))
               }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -300,7 +305,12 @@ struct StepsGroup: View {
     private var summary: String {
         if live, let last = parsed.last { return last.title }
         let n = steps.count
-        var text = "Used \(deviceName) · \(n) step\(n == 1 ? "" : "s")"
+        let asked = parsed.filter { $0.title.hasPrefix("Asked ") }.count
+        let deviceSteps = n - asked - parsed.filter { $0.title.contains(" replied: ") }.count
+        var parts: [String] = []
+        if deviceSteps > 0 { parts.append("Used \(deviceName) · \(deviceSteps) step\(deviceSteps == 1 ? "" : "s")") }
+        if asked > 0 { parts.append("Asked \(asked) teammate\(asked == 1 ? "" : "s")") }
+        var text = parts.isEmpty ? "\(n) step\(n == 1 ? "" : "s")" : parts.joined(separator: " · ")
         if problems > 0 { text += " · \(problems) issue\(problems == 1 ? "" : "s")" }
         return text
     }
@@ -313,7 +323,13 @@ struct StepRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Circle().fill(step.problem == nil ? Theme.tertiary : Theme.warn).frame(width: 5, height: 5)
+                if step.title.hasPrefix("Asked ") || step.title.contains(" replied: ") {
+                    Image(systemName: step.title.hasPrefix("Asked ") ? "arrow.turn.up.right" : "arrow.turn.down.left")
+                        .font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.control)
+                        .frame(width: 10)
+                } else {
+                    Circle().fill(step.problem == nil ? Theme.tertiary : Theme.warn).frame(width: 5, height: 5)
+                }
                 Text(step.title).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     .lineLimit(2).truncationMode(.middle)
             }
@@ -370,5 +386,35 @@ struct TabPill: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+    }
+}
+
+/// Actions for a bot, shared by the chat header "⋯" and the sidebar's right-click menu.
+struct BotMenuItems: View {
+    @EnvironmentObject private var model: AppModel
+    let bot: Brain.Bot
+
+    var body: some View {
+        Button("Bot settings…") { model.sheet = .editBot(bot.id) }
+        Button("New face") { Task { await model.brain.regenerateAvatar(bot.id) } }
+        Divider()
+        Button("Clear conversation…") { model.clearingChat = bot }
+        Button("Delete bot…", role: .destructive) { model.deletingBot = bot }
+    }
+}
+
+struct BotMenu: View {
+    let bot: Brain.Bot
+
+    var body: some View {
+        Menu { BotMenuItems(bot: bot) } label: {
+            Image(systemName: "ellipsis").font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Theme.raised.opacity(0.7)))
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("Bot options")
+        .accessibilityLabel("Bot options")
     }
 }

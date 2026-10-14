@@ -5,6 +5,10 @@ import AppKit
 /// traffic lights and the app's own controls share one centered row.
 let titleBarHeight: CGFloat = 52
 
+/// Where the sidebar toggle sits, just right of the traffic lights. Shared by
+/// the sidebar and the center bar so the button never moves under the cursor.
+let sidebarToggleInset: CGFloat = 84
+
 /// Native-looking chrome without a system toolbar: the title bar stays the
 /// standard thin (transparent) strip so clicks reach our own controls, and
 /// the traffic lights are moved down to sit centered in our 52 pt top row.
@@ -14,6 +18,7 @@ struct WindowChrome: NSViewRepresentable {
 
     private final class ChromeView: NSView {
         private var observers: [NSObjectProtocol] = []
+        private var clickMonitor: Any?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -22,6 +27,7 @@ struct WindowChrome: NSViewRepresentable {
             guard let window else { return }
             window.styleMask.insert(.fullSizeContentView)
             window.titleVisibility = .hidden
+            installDoubleClickGuard(for: window)
             window.titlebarAppearsTransparent = true
             // AppKit re-lays the buttons out on resize and full-screen changes.
             for name in [NSWindow.didResizeNotification, NSWindow.didEndLiveResizeNotification,
@@ -38,7 +44,27 @@ struct WindowChrome: NSViewRepresentable {
             placeTrafficLights()
         }
 
-        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+            if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        }
+
+        /// Our buttons live in the title-bar strip, so quick repeated clicks on them
+        /// (or next to them) reach AppKit as a title-bar double-click, which zooms
+        /// the window. Re-issue those as single clicks: buttons still get them,
+        /// the window never zooms by accident. The zoom button is unaffected.
+        private func installDoubleClickGuard(for window: NSWindow) {
+            guard clickMonitor == nil else { return }
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak window] event in
+                guard let window, event.window === window, event.clickCount >= 2,
+                      event.locationInWindow.y >= window.frame.height - titleBarHeight else { return event }
+                return NSEvent.mouseEvent(
+                    with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags,
+                    timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil,
+                    eventNumber: event.eventNumber, clickCount: 1, pressure: event.pressure
+                ) ?? event
+            }
+        }
 
         private func placeTrafficLights() {
             guard let window, !window.styleMask.contains(.fullScreen) else { return }
@@ -141,5 +167,55 @@ struct ToolbarButton: View {
         .onHover { hovering = $0 }
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// A 1 pt divider with a wider invisible grab area: drag to resize the panel
+/// on `edge`'s side, double-click to reset. Shows the ↔ cursor on hover.
+struct ResizeHandle: View {
+    @Binding var width: Double
+    let range: ClosedRange<Double>
+    let defaultWidth: Double
+    /// Which panel this handle sizes: the one before it (.leading) or after it (.trailing).
+    let edge: HorizontalEdge
+
+    @State private var startWidth: Double?
+    @State private var hovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(hovering || startWidth != nil ? Theme.text.opacity(0.25) : Theme.border)
+            .frame(width: 1)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        hovering = inside
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { value in
+                                let start = startWidth ?? width
+                                startWidth = start
+                                let delta = edge == .leading ? value.translation.width : -value.translation.width
+                                width = min(max(start + delta, range.lowerBound), range.upperBound)
+                            }
+                            .onEnded { _ in startWidth = nil }
+                    )
+                    .onTapGesture(count: 2) { width = defaultWidth }
+            }
+            .zIndex(2)
+            .accessibilityElement()
+            .accessibilityLabel(edge == .leading ? "Resize sidebar" : "Resize chat")
+            .accessibilityValue("\(Int(width)) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: width = min(width + 20, range.upperBound)
+                case .decrement: width = max(width - 20, range.lowerBound)
+                @unknown default: break
+                }
+            }
     }
 }

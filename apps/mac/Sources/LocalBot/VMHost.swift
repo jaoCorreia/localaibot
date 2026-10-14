@@ -120,7 +120,7 @@ final class VMHost: NSObject, ObservableObject, VZVirtualMachineDelegate {
         }
     }
 
-    private var isFailed: Bool {
+    var isFailed: Bool {
         if case .failed = state { return true }
         return false
     }
