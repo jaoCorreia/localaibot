@@ -175,9 +175,7 @@ struct MessageRow: View {
                     if message.text.isEmpty && message.error == nil {
                         TypingDots()
                     } else if !message.text.isEmpty {
-                        Text(markdown(message.text))
-                            .font(.system(size: 13))
-                            .lineSpacing(3)
+                        MarkdownText(text: message.text)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -188,11 +186,6 @@ struct MessageRow: View {
                 Spacer(minLength: 0)
             }
         }
-    }
-
-    private func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
     }
 }
 
