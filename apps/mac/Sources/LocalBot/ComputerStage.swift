@@ -295,13 +295,13 @@ struct DeviceMenu: View {
 
     var body: some View {
         Menu {
-            Button("Rename…") { model.rename(computer) }
-            Button("Add bots…") { model.sheet = .addBots(computer.id) }
+            Button("Rename") { model.rename(computer) }
+            Button("Add bots") { model.sheet = .addBots(computer.id) }
             Divider()
             if let removeBlocked {
-                Button("Remove device… (\(removeBlocked))") {}.disabled(true)
+                Button("Remove device (\(removeBlocked))") {}.disabled(true)
             } else {
-                Button("Remove device…", role: .destructive) { model.removingDevice = computer }
+                Button("Remove device", role: .destructive) { model.removingDevice = computer }
             }
         } label: {
             Image(systemName: "ellipsis").font(.system(size: 12.5, weight: .medium))

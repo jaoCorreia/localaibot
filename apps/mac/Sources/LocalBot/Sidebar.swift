@@ -67,10 +67,10 @@ struct Sidebar: View {
                                 model.selection = .computer(computer.id)
                             }
                             .contextMenu {
-                                Button("Rename…") { model.rename(computer) }
-                                Button("Add bots…") { model.sheet = .addBots(computer.id) }
+                                Button("Rename") { model.rename(computer) }
+                                Button("Add bots") { model.sheet = .addBots(computer.id) }
                                 Divider()
-                                Button("Remove device…", role: .destructive) { model.removingDevice = computer }
+                                Button("Remove device", role: .destructive) { model.removingDevice = computer }
                             }
                         }
                     }

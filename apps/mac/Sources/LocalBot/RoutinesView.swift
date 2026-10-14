@@ -82,9 +82,9 @@ struct RoutineCard: View {
                 Menu {
                     Button("Run now") { Task { await brain.runRoutineNow(routine.id) } }
                         .disabled(routine.lastStatus == "running" || brain.thinking.contains(routine.botId))
-                    Button("Edit…") { model.sheet = .routine(botID: routine.botId, routineID: routine.id) }
+                    Button("Edit") { model.sheet = .routine(botID: routine.botId, routineID: routine.id) }
                     Divider()
-                    Button("Delete…", role: .destructive) { confirmDelete = true }
+                    Button("Delete", role: .destructive) { confirmDelete = true }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.secondary)

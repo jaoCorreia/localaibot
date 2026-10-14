@@ -40,6 +40,10 @@ answer returns to the asker; loop, depth, busy and timeout guards).
 
 - **Group threads:** one conversation with several bots that coordinate on a
   task while the user watches (needs turn-taking: who speaks when).
+- **@mentions in chat:** the user (or a bot in its reply) writes "@Ninja …" and
+  that bot answers right there in the same chat, with its face, device and
+  memory; mentioning bots hand the floor on (loop/hop limits). Includes `@`
+  autocomplete in the composer and highlighted mentions.
 - **Per-bot delegation settings:** which teammates a bot may ask, and whether
   it can be asked at all.
 

@@ -177,7 +177,7 @@ struct MemoryRow: View {
 
     private var menu: some View {
         Menu {
-            Button("Edit…") { draft = memory.text; editing = true }
+            Button("Edit") { draft = memory.text; editing = true }
             if memory.kind == "fact" {
                 Button("Pin as always known") { Task { await brain.editMemory(memory.id, bot: bot.id, kind: "core") } }
             } else if memory.kind == "core" {
@@ -185,7 +185,7 @@ struct MemoryRow: View {
             }
             Divider()
             Button("Forget") { Task { await brain.forgetMemory(memory.id, bot: bot.id) } }
-            Button("Delete forever…", role: .destructive) { confirmDelete = true }
+            Button("Delete forever", role: .destructive) { confirmDelete = true }
         } label: {
             Image(systemName: "ellipsis").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
                 .frame(width: 22, height: 22)

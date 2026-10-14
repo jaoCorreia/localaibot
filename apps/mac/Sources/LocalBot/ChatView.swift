@@ -398,11 +398,11 @@ struct BotMenuItems: View {
     let bot: Brain.Bot
 
     var body: some View {
-        Button("Bot settings…") { model.sheet = .editBot(bot.id) }
+        Button("Bot settings") { model.sheet = .editBot(bot.id) }
         Button("New face") { Task { await model.brain.regenerateAvatar(bot.id) } }
         Divider()
-        Button("Clear conversation…") { model.clearingChat = bot }
-        Button("Delete bot…", role: .destructive) { model.deletingBot = bot }
+        Button("Clear conversation") { model.clearingChat = bot }
+        Button("Delete bot", role: .destructive) { model.deletingBot = bot }
     }
 }
 

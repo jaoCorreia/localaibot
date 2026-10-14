@@ -552,7 +552,7 @@ struct ProviderPage: View {
 
             Card {
                 SettingRow(label: "Remove provider", detail: "Bots using it will need another provider. Your key is forgotten.") {
-                    DestructiveButton(title: "Remove…") { confirmRemove = true }
+                    DestructiveButton(title: "Remove") { confirmRemove = true }
                 }
             }
         }
