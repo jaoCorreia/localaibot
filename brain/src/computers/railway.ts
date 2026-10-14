@@ -7,7 +7,9 @@ import type { Computer, ComputerProvider, ComputerState } from "./types.ts";
 
 const API = "https://backboard.railway.com/graphql/v2";
 /** The device image (see /device). Override to test a build of your own. */
-const IMAGE = process.env.LOCALBOT_DEVICE_IMAGE ?? "ghcr.io/jaocorreia/localbot-device:latest";
+const IMAGE = process.env.LOCALBOT_DEVICE_IMAGE ?? "ghcr.io/patrick-mns/localbot-device:latest";
+/** The brain image (brain/Dockerfile) for bots that keep working while the Mac is off. */
+const BRAIN_IMAGE = process.env.LOCALBOT_BRAIN_IMAGE ?? "ghcr.io/patrick-mns/localbot-brain:latest";
 const PROJECT = "Local Bot";
 const TOKEN_ACCOUNT = "railway";
 
@@ -128,6 +130,42 @@ export class RailwayProvider implements ComputerProvider {
     const token = remote.token(id);
     if (!token) throw new Error("This device’s token is missing");
     return encodeShare({ url: d.url, token, vncPassword: d.vncPassword, name: d.name });
+  }
+
+  /**
+   * A brain service in the same project, with a volume for its data, so bots
+   * moved there keep working while the Mac is off. Returns how to reach it.
+   */
+  async createBrain() {
+    const { projectId, environmentId } = await this.ensureProject();
+    const token = remote.newToken();
+    const variables = { BRAIN_TOKEN: token, PORT: "8080", LOCALBOT_HOME: "/data", LOCALBOT_SECRETS: "file" };
+    const { serviceCreate } = await this.api(
+      `mutation($input: ServiceCreateInput!) { serviceCreate(input: $input) { id } }`,
+      { input: { projectId, name: serviceName("brain"), source: { image: BRAIN_IMAGE }, variables } },
+    );
+    const serviceId: string = serviceCreate.id;
+    try {
+      await this.api(`mutation($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }`,
+        { input: { projectId, environmentId, serviceId, variables, skipDeploys: true } });
+      await this.api(`mutation($input: VolumeCreateInput!) { volumeCreate(input: $input) { id } }`,
+        { input: { projectId, serviceId, environmentId, mountPath: "/data" } });
+      const { serviceDomainCreate } = await this.api(
+        `mutation($input: ServiceDomainCreateInput!) { serviceDomainCreate(input: $input) { domain } }`,
+        { input: { serviceId, environmentId, targetPort: 8080 } },
+      );
+      await this.api(`mutation($s: String!, $e: String!) { serviceInstanceDeployV2(serviceId: $s, environmentId: $e) }`,
+        { s: serviceId, e: environmentId });
+      return { url: `https://${serviceDomainCreate.domain}`, token, serviceId };
+    } catch (err) {
+      await this.api(`mutation($id: String!) { serviceDelete(id: $id) }`, { id: serviceId }).catch(() => {});
+      throw err;
+    }
+  }
+
+  /** Deletes a service Local Bot created (the cloud brain). */
+  async deleteService(serviceId: string) {
+    await this.api(`mutation($id: String!) { serviceDelete(id: $id) }`, { id: serviceId });
   }
 
   /** Deletes the Railway service (and its deployments) and forgets the device. */

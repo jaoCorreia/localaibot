@@ -81,6 +81,12 @@ export class Conversations {
     return this.messages.where((m) => m.botId === botId);
   }
 
+  /** Takes a chat moved from another brain. */
+  importHistory(botId: string, messages: Message[]) {
+    this.messages.remove((m) => m.botId === botId);
+    for (const m of messages) this.messages.upsert({ ...m, botId });
+  }
+
   isBusy(botId: string) {
     return this.running.has(botId);
   }

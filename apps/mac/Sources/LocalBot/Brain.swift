@@ -77,6 +77,12 @@ final class Brain: ObservableObject {
         let avatarSeed: String        // catalog spec ("v1:…") or legacy seed
         let face: Face
         let memoryAuto: Bool?
+        /// "cloud" when the bot lives in the cloud brain (keeps working with the app closed).
+        let host: String?
+        /// Snapshot used to restore execution controls after opening or reconnecting.
+        let status: String?
+
+        var inCloud: Bool { host == "cloud" }
         let computers: [Access]
 
         var ownedComputer: String? { computers.first { $0.role == "owner" }?.computerId }
@@ -210,6 +216,7 @@ final class Brain: ObservableObject {
     @Published private(set) var bots: [Bot] = []
     @Published private(set) var messages: [String: [Message]] = [:]
     @Published private(set) var thinking: Set<String> = []
+    private var botStatusRevision: [String: Int] = [:]
     @Published private(set) var routines: [Routine] = []
     @Published private(set) var memories: [String: [Memory]] = [:]
     @Published private(set) var providerStatus: ProviderStatus?
@@ -291,6 +298,7 @@ final class Brain: ObservableObject {
                 await refreshBots()
                 await refreshProviders()
                 await refreshRoutines()
+                await refreshCloud()
                 loaded = true
                 // Computers change outside the app too (docker, lume); poll for state.
                 while !Task.isCancelled && self.connected && self.process === p {
@@ -449,7 +457,16 @@ final class Brain: ObservableObject {
     // MARK: Bots
 
     func refreshBots() async {
-        if let list: [Bot] = try? await request("bots.list") { bots = list }
+        let revisions = botStatusRevision
+        if let list: [Bot] = try? await request("bots.list") {
+            bots = list
+            thinking.formIntersection(Set(list.map(\.id)))
+            for bot in list where revisions[bot.id] == botStatusRevision[bot.id] {
+                // An event received during this request is newer than its snapshot.
+                if bot.status == "thinking" { thinking.insert(bot.id) }
+                else if bot.status == "idle" { thinking.remove(bot.id) }
+            }
+        }
     }
 
     struct BotDraft {
@@ -501,6 +518,55 @@ final class Brain: ObservableObject {
     }
 
     func regenerateAvatar(_ id: String) async { await perform("bots.regenerateAvatar", ["id": id]) }
+
+    // MARK: Cloud brain
+
+    struct CloudStatus: Decodable, Hashable {
+        let connected: Bool
+        let url: String?
+        let managed: String?
+        let healthy: Bool
+        let bots: Int
+    }
+
+    @Published private(set) var cloudStatus: CloudStatus?
+    /// Bots being moved between the Mac and the cloud right now.
+    @Published private(set) var moving: Set<String> = []
+
+    func refreshCloud() async {
+        if let s: CloudStatus = try? await request("cloud.status") { cloudStatus = s }
+    }
+
+    /// Creates the cloud brain on Railway (takes a few minutes); returns an error message or nil.
+    func setupCloudBrain() async -> String? {
+        defer { Task { await refreshCloud() } }
+        do {
+            _ = try await call("cloud.setupRailway")
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func disconnectCloud(deleteBrain: Bool) async -> String? {
+        defer { Task { await refreshCloud() } }
+        do {
+            _ = try await call("cloud.disconnect", ["deleteBrain": deleteBrain])
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Moves a bot (chat, routines, memory) to the cloud brain or back to this Mac.
+    func moveBot(_ id: String, toCloud: Bool) async {
+        moving.insert(id)
+        await perform("cloud.moveBot", ["botId": id, "to": toCloud ? "cloud" : "mac"])
+        moving.remove(id)
+        await refreshBots()
+        await refreshCloud()
+        await loadHistory(id)
+    }
 
     func deleteBot(_ id: String) async {
         await perform("bots.delete", ["id": id])
@@ -784,6 +850,7 @@ final class Brain: ObservableObject {
             messages[botID]?[i].text += delta
         case "bot.status":
             guard let d = data as? [String: Any], let id = d["botId"] as? String else { return }
+            botStatusRevision[id, default: 0] += 1
             if d["status"] as? String == "thinking" { thinking.insert(id) } else { thinking.remove(id) }
         case "bots":
             Task { await refreshBots(); await refreshComputers() }
@@ -797,6 +864,8 @@ final class Brain: ObservableObject {
             }
         case "providers":
             Task { await refreshProviders() }
+        case "cloud":
+            Task { await refreshCloud() }
         default:
             break
         }

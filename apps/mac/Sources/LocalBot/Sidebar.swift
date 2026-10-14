@@ -37,7 +37,14 @@ struct Sidebar: View {
                             Row(selected: model.selection == .bot(bot.id)) {
                                 AnimatedFace(face: bot.face, size: 28, working: brain.thinking.contains(bot.id), seed: bot.id)
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(bot.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    HStack(spacing: 4) {
+                                        Text(bot.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                        if bot.inCloud {
+                                            Image(systemName: "cloud.fill").font(.system(size: 9))
+                                                .foregroundStyle(Theme.tertiary)
+                                                .help("Lives in the cloud: keeps working with the app closed")
+                                        }
+                                    }
                                     Text(brain.thinking.contains(bot.id) ? "Working…" : (bot.role.isEmpty ? "Bot" : bot.role))
                                         .font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
                                 }

@@ -30,6 +30,7 @@ watching (and taking over) live. No cloud: you are the cloud.
 brain/      TypeScript, cross-platform: bots, chat, agent loop, devices, providers
 apps/mac/   Swift shell for macOS: window, device screen, native VM display
 device/     Image for remote devices: the Linux desktop plus an MCP agent
+brain/Dockerfile  The brain as a cloud service, for bots that run 24/7
 scripts/    dev helpers
 ```
 
@@ -120,14 +121,27 @@ those MCP tools can be a device, so new machine providers plug in the same way.
   docker run -d -p 8080:8080 --shm-size=1g \
     -e LOCALBOT_PUBLIC_URL=https://my-device.example.com \
     -e LOCALBOT_TOKEN=$(openssl rand -hex 24) -e VNC_PW=$(openssl rand -hex 6) \
-    ghcr.io/jaocorreia/localbot-device:latest
+    ghcr.io/patrick-mns/localbot-device:latest
   docker logs <container>   # prints the share code
   ```
 
   The code carries the URL, token and screen password, so it grants control
   of the machine: share it only with people you trust.
 
-The image is built and published by `.github/workflows/device-image.yml`.
+### Bots that keep working with the app closed
+
+The brain can also run in the cloud (`brain/Dockerfile`, entry `src/server.ts`:
+the same methods over HTTP + server-sent events, guarded by `BRAIN_TOKEN`).
+In Settings → Device Providers → Railway, **Cloud brain → Set up** creates it
+as a Railway service with a volume for its data. Then a bot's "⋯ → Move to
+the cloud" moves its chat, routines and memory there: it keeps chatting,
+running routines and learning while the Mac is off. Its devices must be
+cloud or remote ones. While the app is open, the local brain forwards that
+bot's methods to the cloud and relays its events, so it looks like any other
+bot. "Move to this Mac" brings it back.
+
+Images are built and published by `.github/workflows/device-image.yml` and
+`brain-image.yml` (`LOCALBOT_BRAIN_IMAGE` overrides the brain's).
 Set `LOCALBOT_DEVICE_IMAGE` to make Railway devices run a different image.
 
 ## License

@@ -176,6 +176,20 @@ export function provider(id: string): ChatProvider {
 }
 
 /** Everything the UI needs, never the keys themselves. */
+/**
+ * A provider's connection, key included, to set the same one up in another
+ * brain this user runs (moving a bot to the cloud). Never sent anywhere else.
+ */
+export function exportProvider(id: string) {
+  const c = config(id);
+  return { preset: c.preset, label: c.label, baseURL: c.baseURL, apiKey: keyOf(c) };
+}
+
+/** A configured provider with the same service and URL, if any. */
+export function findProvider(preset: string, baseURL: string) {
+  return settings.value.providers.find((c) => c.preset === preset && c.baseURL === baseURL)?.id;
+}
+
 export function providerStatus() {
   return {
     defaultProvider: settings.value.defaultProvider,

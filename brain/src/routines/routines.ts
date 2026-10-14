@@ -120,6 +120,15 @@ export class Routines {
     this.changed();
   }
 
+  /** Takes routines moved from another brain (an interrupted run counts as failed). */
+  importForBot(botId: string, routines: Routine[]) {
+    this.items.remove((r) => r.botId === botId);
+    for (const r of routines) {
+      this.items.upsert({ ...r, botId, ...(r.lastStatus === "running" ? { lastStatus: "failed", lastError: "Interrupted by the move" } : {}) });
+    }
+    this.changed();
+  }
+
   /** Runs now, outside the schedule (the next scheduled run is unchanged). */
   async runNow(id: string) {
     const routine = this.get(id);

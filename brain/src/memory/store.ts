@@ -157,6 +157,27 @@ export class MemoryStore {
     this.db.prepare(`DELETE FROM chat_summaries WHERE bot_id = ?`).run(botId);
   }
 
+  /** A bot's own memories (history included) and chat summary, to move it to another brain. */
+  exportForBot(botId: string) {
+    return {
+      rows: this.db.prepare(`SELECT * FROM memories WHERE bot_id = ?`).all(botId) as Record<string, unknown>[],
+      summary: this.chatSummary(botId) ?? null,
+    };
+  }
+
+  importForBot(botId: string, data: { rows: Record<string, any>[]; summary: { text: string; coversUntil: string } | null }) {
+    this.deleteForBot(botId);
+    const insert = this.db.prepare(
+      `INSERT INTO memories (id, bot_id, kind, text, topic, source, importance, created_at, updated_at, valid_to, superseded_by, use_count, last_used_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const r of data.rows) {
+      insert.run(r.id, botId, r.kind, r.text, r.topic ?? null, r.source, r.importance ?? 3, r.created_at, r.updated_at,
+        r.valid_to ?? null, r.superseded_by ?? null, r.use_count ?? 0, r.last_used_at ?? null);
+    }
+    if (data.summary) this.setChatSummary(botId, data.summary.text, data.summary.coversUntil);
+  }
+
   get(id: string): Memory | undefined {
     const row = this.db.prepare(`SELECT * FROM memories WHERE id = ?`).get(id);
     return row ? toMemory(row) : undefined;
