@@ -45,11 +45,21 @@ Requirements: a Mac with Apple silicon and macOS 14+, and
 [Docker Desktop](https://www.docker.com/products/docker-desktop/) running
 (bots' Linux computers run in Docker).
 
-The app isn't signed with an Apple Developer ID yet, so the first time macOS
-blocks it: open **System Settings → Privacy & Security** and click
-**Open Anyway** next to "Local Bot" (or run
-`xattr -dr com.apple.quarantine "/Applications/Local Bot.app"`). After that it
-opens normally.
+### First launch: allowing an unsigned app
+
+The app isn't signed with an Apple Developer ID yet, so macOS blocks it the
+first time ("Apple could not verify…" or "is damaged"). Allow it once, either way:
+
+- **System Settings → Privacy & Security**, scroll down and click
+  **Open Anyway** next to "Local Bot", then confirm.
+- Or remove the quarantine flag in Terminal (after moving the app to
+  Applications):
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Local Bot.app"
+  ```
+
+After that it opens normally.
 
 On first launch a setup assistant connects an AI provider (your key goes to the
 macOS Keychain), creates a Linux device and your first bot.
