@@ -709,6 +709,10 @@ struct DeviceAccountPage: View {
                 }
             }
 
+            if account.connected && account.id == "railway" {
+                CloudBrainCard(brain: brain)
+            }
+
             if account.connected {
                 Card(title: "Status") {
                     SettingRow(label: "Devices", detail: "Add more from the sidebar’s “Add device”.") {
@@ -736,6 +740,65 @@ struct DeviceAccountPage: View {
             error = await brain.connectDeviceAccount(account.id, token: token.trimmingCharacters(in: .whitespaces))
             if error == nil { token = ""; replacing = false }
             saving = false
+        }
+    }
+}
+
+/// The brain in the cloud: bots moved there keep working with the app closed.
+struct CloudBrainCard: View {
+    @ObservedObject var brain: Brain
+    @State private var working = false
+    @State private var error: String?
+    @State private var confirmRemove = false
+
+    private var status: Brain.CloudStatus? { brain.cloudStatus }
+
+    var body: some View {
+        Card(title: "Cloud brain") {
+            if let status, status.connected {
+                SettingRow(label: status.healthy ? "Running" : "Not reachable",
+                           detail: "\(status.bots) bot\(status.bots == 1 ? "" : "s") in the cloud. Move a bot with its “⋯” menu.") {
+                    Circle().fill(status.healthy ? Theme.live : Theme.warn).frame(width: 8, height: 8)
+                }
+                SettingRow(label: "Remove cloud brain",
+                           detail: error ?? (status.bots > 0 ? "Move its bots back to this Mac first." : "Deletes the service on Railway.")) {
+                    DestructiveButton(title: working ? "Removing…" : "Remove") { confirmRemove = true }
+                        .disabled(working || status.bots > 0)
+                }
+            } else {
+                SettingRow(label: "Keep bots working with the app closed",
+                           detail: error ?? "Creates a brain service with its own storage on your Railway account. Bots you move there chat, run routines and learn 24/7.") {
+                    HStack(spacing: 8) {
+                        if working { ProgressView().controlSize(.small) }
+                        PillButton(title: working ? "Setting up… (a few minutes)" : "Set up", systemImage: "cloud", prominent: true) { setup() }
+                            .disabled(working)
+                    }
+                }
+            }
+        }
+        .task { await brain.refreshCloud() }
+        .confirmationDialog("Remove the cloud brain?", isPresented: $confirmRemove) {
+            Button("Remove", role: .destructive) { remove() }
+        } message: {
+            Text("The brain service and its storage are deleted from Railway.")
+        }
+    }
+
+    private func setup() {
+        working = true
+        error = nil
+        Task {
+            error = await brain.setupCloudBrain()
+            working = false
+        }
+    }
+
+    private func remove() {
+        working = true
+        error = nil
+        Task {
+            error = await brain.disconnectCloud(deleteBrain: true)
+            working = false
         }
     }
 }

@@ -403,6 +403,14 @@ struct BotMenuItems: View {
         Button("Bot settings") { model.sheet = .editBot(bot.id) }
         Button("New face") { Task { await model.brain.regenerateAvatar(bot.id) } }
         Divider()
+        if model.brain.moving.contains(bot.id) {
+            Button("Moving…") {}.disabled(true)
+        } else if bot.inCloud {
+            Button("Move to this Mac") { Task { await model.brain.moveBot(bot.id, toCloud: false) } }
+        } else if model.brain.cloudStatus?.connected == true {
+            Button("Move to the cloud (keeps working with the app closed)") { Task { await model.brain.moveBot(bot.id, toCloud: true) } }
+        }
+        Divider()
         Button("Clear conversation") { model.clearingChat = bot }
         Button("Delete bot", role: .destructive) { model.deletingBot = bot }
     }

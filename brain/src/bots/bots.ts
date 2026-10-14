@@ -73,6 +73,19 @@ export class Bots {
     return this.view(bot);
   }
 
+  /** The bot and its device grants, to move it to another brain. */
+  exportBot(id: string) {
+    return { bot: this.get(id), accesses: this.accesses.where((a) => a.botId === id) };
+  }
+
+  /** Takes a bot moved from another brain, keeping its id. */
+  importBot(bot: Bot, accesses: Access[]): BotView {
+    this.bots.upsert(bot);
+    this.accesses.remove((a) => a.botId === bot.id);
+    for (const a of accesses) this.accesses.upsert({ ...a, botId: bot.id });
+    return this.view(bot);
+  }
+
   regenerateAvatar(id: string): BotView {
     return this.view(this.bots.upsert({ ...this.get(id), avatarSeed: randomAvatar() }));
   }
