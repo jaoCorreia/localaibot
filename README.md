@@ -1,4 +1,13 @@
-# Local Bot
+<p align="center">
+  <img src="assets/AppIcon.png" width="128" height="128" alt="Local Bot icon">
+</p>
+
+<h1 align="center">Local Bot</h1>
+
+<p align="center">
+  AI bots that work on their own computers, right on your Mac.<br>
+  <a href="https://github.com/patrick-mns/localbot/releases/latest">Download</a>
+</p>
 
 A local take on Grok Bot: AI bots that work on their own computers, with you
 watching (and taking over) live. No cloud: you are the cloud.
