@@ -103,24 +103,48 @@ struct PillButton: View {
     var tint: Color?
     let action: () -> Void
     @State private var hovering = false
+    /// Icon only (title as tooltip), for tight toolbars.
+    @Environment(\.compactPills) private var compact
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(prominent ? Theme.onText : Theme.text)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(Capsule().fill(background))
-                .overlay(Capsule().stroke(prominent || tint != nil ? .clear : Theme.border))
+            Group {
+                if compact {
+                    Image(systemName: systemImage)
+                        .frame(width: 30, height: 28)
+                } else {
+                    Label(title, systemImage: systemImage)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                }
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(prominent ? Theme.onText : Theme.text)
+            .background(Capsule().fill(background))
+            .overlay(Capsule().stroke(prominent || tint != nil ? .clear : Theme.border))
+            .fixedSize()
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .help(compact ? title : "")
+        .accessibilityLabel(title)
     }
 
     private var background: Color {
         if let tint { return tint }
         if prominent { return hovering ? Theme.text.opacity(0.85) : Theme.text }
         return hovering ? Theme.hover : Theme.raised
+    }
+}
+
+private struct CompactPillsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var compactPills: Bool {
+        get { self[CompactPillsKey.self] }
+        set { self[CompactPillsKey.self] = newValue }
     }
 }
 
