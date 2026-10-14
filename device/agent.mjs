@@ -222,7 +222,11 @@ function proxy(req, res) {
     res.writeHead(r.statusCode ?? 502, r.headers);
     r.pipe(res);
   });
-  up.on("error", () => send(res, 502, { error: "screen not ready" }));
+  // noVNC starts a few seconds after the agent: tell browsers to come back.
+  up.on("error", () => {
+    res.writeHead(503, { "content-type": "text/html", "retry-after": "2" })
+      .end('<!doctype html><meta http-equiv="refresh" content="2"><title>Starting…</title>');
+  });
   req.pipe(up);
 }
 

@@ -48,7 +48,7 @@ struct VNCScreen: NSViewRepresentable {
             source: """
             setInterval(() => {
               const s = document.getElementById('status');
-              if (s && /disconnect|failed|error/i.test(s.textContent || '')) location.reload();
+              if (s && /disconnect|failed|error|closed|wrong/i.test(s.textContent || '')) location.reload();
             }, 2500);
             """,
             injectionTime: .atDocumentEnd,
@@ -105,6 +105,19 @@ struct VNCScreen: NSViewRepresentable {
             let viewOnly = controlling == true ? "false" : "true"
             webView.evaluateJavaScript(
                 "window.__localbotViewOnly = \(viewOnly); document.documentElement.classList.toggle('lb-view-only', \(viewOnly));")
+        }
+
+        /// A remote device answers with an HTTP error while its screen is still
+        /// booting; that page would sit there dark and never reconnect. Retry instead.
+        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                     decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            guard navigationResponse.isForMainFrame,
+                  let http = navigationResponse.response as? HTTPURLResponse, http.statusCode >= 400,
+                  let loaded else { return decisionHandler(.allow) }
+            decisionHandler(.cancel)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak webView] in
+                webView?.load(URLRequest(url: loaded))
+            }
         }
 
         /// The device's web server may not be up yet; keep retrying quietly.
