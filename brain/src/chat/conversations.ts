@@ -7,7 +7,7 @@ import { MEMORY_TOOLS, VERBATIM_MESSAGES, type MemoryService } from "../memory/m
 import type { Hands } from "../hands/types.ts";
 import type { RunOutcome } from "../routines/routines.ts";
 import { provider } from "./providers.ts";
-import type { ChatMessage, ContentPart } from "./types.ts";
+import type { ChatMessage, ChatProvider, ContentPart } from "./types.ts";
 
 export interface Message {
   id: string;
@@ -60,7 +60,13 @@ export class Conversations {
   private routines?: Routines;
   private memory?: MemoryService;
 
-  constructor(private emit: Emit, private workplace: FindWorkplace, private team: Team = () => []) {}
+  constructor(
+    private emit: Emit,
+    private workplace: FindWorkplace,
+    private team: Team = () => [],
+    /** Which model client a bot talks to; injectable so tests can use a scripted fake. */
+    private chatWith: (bot: Bot) => ChatProvider = (bot) => provider(bot.provider),
+  ) {}
 
   /** Routines are built on top of conversations, so they're attached afterwards. */
   attachRoutines(routines: Routines) {
@@ -166,7 +172,7 @@ export class Conversations {
       const reply = this.draft(bot);
       let result;
       try {
-        result = await provider(bot.provider).chat({
+        result = await this.chatWith(bot).chat({
           model: bot.model,
           messages: transcript,
           tools: place ? [...COMPUTER_TOOLS, ...tools] : tools.length ? tools : undefined,

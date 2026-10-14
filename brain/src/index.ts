@@ -16,7 +16,9 @@ import type { ComputerProvider } from "./computers/types.ts";
  *   event    {event, data}          (brain -> shell, unsolicited)
  * stdout is reserved for the protocol; logs go to stderr.
  */
-const computerProviders: ComputerProvider[] = [new DockerProvider(), new LumeProvider()];
+/** macOS VMs (Lume) aren't part of the first release yet; LOCALBOT_EXPERIMENTAL_MACOS=1 turns them on. */
+const macOSDevices = process.env.LOCALBOT_EXPERIMENTAL_MACOS === "1";
+const computerProviders: ComputerProvider[] = [new DockerProvider(), ...(macOSDevices ? [new LumeProvider()] : [])];
 
 function emit(event: string, data: unknown) {
   process.stdout.write(JSON.stringify({ event, data }) + "\n");
@@ -85,9 +87,10 @@ const methods: Record<string, Handler> = {
   /** What kinds of device can be added on this host (and what is coming). */
   "computers.kinds": async () => {
     const [docker, lume] = await Promise.all(computerProviders.map((p) => p.available()));
+    const macOS = macOSDevices && lume;
     return [
       { id: "docker", label: "Linux desktop", detail: "Debian + XFCE + Firefox in a container. Starts in seconds, ~1 GB.", available: docker, reason: docker ? null : "Docker isn’t running" },
-      { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: lume, reason: lume ? null : "Needs an Apple silicon Mac" },
+      { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: macOS, reason: macOS ? null : "Coming soon" },
       { id: "ios-simulator", label: "iOS Simulator", detail: "Drive iPhone and iPad apps.", available: false, reason: "Coming soon" },
       { id: "android-emulator", label: "Android Emulator", detail: "Drive Android apps.", available: false, reason: "Coming soon" },
       { id: "remote", label: "Another computer", detail: "Pair a Mac, Windows or Linux machine over the network.", available: false, reason: "Coming soon" },

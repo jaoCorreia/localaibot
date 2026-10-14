@@ -81,7 +81,9 @@ class FileStore implements Backend {
 }
 
 class Secrets {
-  private backend: Backend = platform() === "darwin" ? new MacKeychain() : new FileStore();
+  // LOCALBOT_SECRETS=file forces the file store (tests, and hosts without a keychain).
+  private backend: Backend =
+    platform() === "darwin" && process.env.LOCALBOT_SECRETS !== "file" ? new MacKeychain() : new FileStore();
   private cache = new Map<string, string>();
 
   get storeLabel() {

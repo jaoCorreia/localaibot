@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "start": "node --import tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-reporter=spec \"test/*.test.ts\"",
+    "check": "tsc --noEmit && npm test"
   },
   "dependencies": {
     "tsx": "^4.19.0"
