@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Collection } from "../store.ts";
 import type { Bot } from "../bots/bots.ts";
-import { ASK_BOT_TOOL, COMPUTER_TOOLS, runTool } from "../agent/tools.ts";
+import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, runTool } from "../agent/tools.ts";
+import type { Routines } from "../routines/routines.ts";
+import { MEMORY_TOOLS, VERBATIM_MESSAGES, type MemoryService } from "../memory/memory.ts";
 import type { Hands } from "../hands/types.ts";
 import type { RunOutcome } from "../routines/routines.ts";
 import { provider } from "./providers.ts";
@@ -41,8 +43,8 @@ interface TurnOptions {
   chain?: string[];
 }
 
-/** How many past messages go back to the model with each turn. */
-const HISTORY_LIMIT = 40;
+/** How many past messages go back verbatim; older ones live in the chat summary. */
+const HISTORY_LIMIT = VERBATIM_MESSAGES;
 /** Upper bound on model round-trips per user message. */
 const MAX_STEPS = 30;
 /** How many hops a request may travel: A → B → C, no further. */
@@ -55,7 +57,19 @@ export class Conversations {
   private messages = new Collection<Message>("messages.json");
   private running = new Map<string, AbortController>();
 
+  private routines?: Routines;
+  private memory?: MemoryService;
+
   constructor(private emit: Emit, private workplace: FindWorkplace, private team: Team = () => []) {}
+
+  /** Routines are built on top of conversations, so they're attached afterwards. */
+  attachRoutines(routines: Routines) {
+    this.routines = routines;
+  }
+
+  attachMemory(memory: MemoryService) {
+    this.memory = memory;
+  }
 
   history(botId: string) {
     return this.messages.where((m) => m.botId === botId);
@@ -68,6 +82,8 @@ export class Conversations {
   clear(botId: string) {
     this.stop(botId);
     this.messages.remove((m) => m.botId === botId);
+    // Clearing the chat drops its summary too; long-term memories stay.
+    this.memory?.store.clearChatSummary(botId);
   }
 
   stop(botId: string) {
@@ -99,8 +115,12 @@ export class Conversations {
     this.running.set(bot.id, abort);
     this.emit("bot.status", { botId: bot.id, status: "thinking" });
 
-    const done = this.run(bot, abort.signal, chain)
+    const done = this.run(bot, abort.signal, chain, !!routine)
       .catch((err): RunOutcome => ({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+      .then((outcome) => {
+        this.learn(bot, user, outcome);
+        return outcome;
+      })
       .finally(() => {
         this.running.delete(bot.id);
         this.emit("bot.status", { botId: bot.id, status: "idle" });
@@ -108,9 +128,11 @@ export class Conversations {
     return { userId: user.id, done };
   }
 
-  private async run(bot: Bot, signal: AbortSignal, chain: string[]): Promise<RunOutcome> {
+  private async run(bot: Bot, signal: AbortSignal, chain: string[], inRoutine = false): Promise<RunOutcome> {
     const teammates = chain.length <= MAX_DELEGATION_HOPS ? this.teammates(chain) : [];
-    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : [])];
+    // A routine run may look at routines but not create more (no runaway chains).
+    const routineTools = !this.routines ? [] : inRoutine ? ROUTINE_TOOLS.filter((t) => t.name === "list_routines") : ROUTINE_TOOLS;
+    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : []), ...routineTools, ...(this.memory ? MEMORY_TOOLS : [])];
     let lastReply: string | undefined;
     let place: Workplace | null = null;
     try {
@@ -120,6 +142,8 @@ export class Conversations {
     }
     const transcript: ChatMessage[] = [
       { role: "system", content: this.system(bot, place, teammates) },
+      ...(this.memory ? [{ role: "system" as const, content: this.memory.context(bot, this.lastPrompt(bot)) }] : []),
+      ...this.summary(bot),
       ...this.past(bot),
       // Restated after the history so earlier turns can't override the current state.
       {
@@ -178,6 +202,17 @@ export class Conversations {
       for (const call of (transcript.at(-1) as Extract<ChatMessage, { role: "assistant" }>).tool_calls!) {
         if (signal.aborted) return { ok: false, error: "Stopped" };
         let content: string;
+        if (this.memory && MEMORY_TOOLS.some((t) => t.name === call.function.name)) {
+          const out = this.memory.tool(bot, call.function.name, call.function.arguments);
+          if (out.activity) this.activity(bot, out.activity);
+          transcript.push({ role: "tool", tool_call_id: call.id, content: out.result });
+          continue;
+        }
+        if (ROUTINE_TOOLS.some((t) => t.name === call.function.name)) {
+          content = this.routineTool(bot, call.function.name, call.function.arguments);
+          transcript.push({ role: "tool", tool_call_id: call.id, content });
+          continue;
+        }
         if (call.function.name === ASK_BOT_TOOL.name) {
           content = await this.delegate(bot, chain, call.function.arguments, signal);
           transcript.push({ role: "tool", tool_call_id: call.id, content });
@@ -220,6 +255,74 @@ export class Conversations {
     if (signal.aborted) return { ok: false, error: "Stopped" };
     this.activity(bot, `Stopped after ${MAX_STEPS} steps`);
     return { ok: false, error: `Didn’t finish within ${MAX_STEPS} steps` };
+  }
+
+  /** The latest prompt in this bot's chat: what the memory search is about. */
+  private lastPrompt(bot: Bot) {
+    const prompts = this.history(bot.id).filter((m) => m.role === "user");
+    return prompts[prompts.length - 1]?.text ?? "";
+  }
+
+  /** The gist of the chat beyond the verbatim window, if any. */
+  private summary(bot: Bot): ChatMessage[] {
+    const s = this.memory?.store.chatSummary(bot.id);
+    return s ? [{ role: "system", content: `Summary of the earlier part of this chat:\n${s.text}` }] : [];
+  }
+
+  /**
+   * After a finished turn: consolidate what was learned into long-term memory
+   * and fold old chat into the summary. Background work; never blocks the chat.
+   */
+  private learn(bot: Bot, prompt: Message, outcome: RunOutcome) {
+    if (!this.memory || !outcome.reply) return;
+    const current = this.team().find((b) => b.id === bot.id) ?? bot;
+    const history = this.history(bot.id);
+    if ((current as Bot & { memoryAuto?: boolean }).memoryAuto !== false) {
+      const steps = history.filter((m) => m.role === "activity" && m.at >= prompt.at).map((m) => m.text);
+      void this.memory.consolidate(current, { request: prompt.text, steps, reply: outcome.reply, startedAt: prompt.at }).catch(() => {});
+    }
+    void this.memory.compact(current, history).catch(() => {});
+  }
+
+  /** create_routine / list_routines / delete_routine, always scoped to this bot. */
+  private routineTool(bot: Bot, name: string, rawArgs: string): string {
+    if (!this.routines) return "Error: routines aren't available.";
+    let a: any;
+    try {
+      a = JSON.parse(rawArgs || "{}");
+    } catch {
+      return "Error: invalid arguments.";
+    }
+    const mine = () => this.routines!.list(bot.id);
+    try {
+      switch (name) {
+        case "create_routine": {
+          const r = this.routines.create({ botId: bot.id, name: String(a.name ?? ""), task: String(a.task ?? ""), schedule: a.schedule });
+          const next = r.nextRunAt ? new Date(r.nextRunAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }) : "not scheduled";
+          this.activity(bot, `Created routine “${r.name}” · ${r.scheduleText}`);
+          return `Created routine "${r.name}" (${r.scheduleText}). Next run: ${next}.`;
+        }
+        case "list_routines": {
+          const list = mine();
+          if (!list.length) return "You have no routines.";
+          return list.map((r) =>
+            `- ${r.name}: ${r.scheduleText}; ${r.enabled ? "on" : "off"}; last: ${r.lastStatus ?? "never ran"}` +
+            `${r.nextRunAt && r.enabled ? `; next: ${new Date(r.nextRunAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}` : ""}` +
+            `\n  task: ${r.task}`).join("\n");
+        }
+        case "delete_routine": {
+          const wanted = String(a.name ?? "").trim().toLowerCase();
+          const r = mine().find((x) => x.name.toLowerCase() === wanted) ?? mine().find((x) => x.name.toLowerCase().includes(wanted) && wanted.length >= 3);
+          if (!r) return `Error: no routine called "${a.name}". Your routines: ${mine().map((x) => x.name).join(", ") || "none"}.`;
+          this.routines.delete(r.id);
+          this.activity(bot, `Deleted routine “${r.name}”`);
+          return `Deleted routine "${r.name}".`;
+        }
+      }
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : err}`;
+    }
+    return "Error: unknown routine tool.";
   }
 
   /** Bots that can be asked from this request: everyone not already in the chain. */
@@ -329,6 +432,7 @@ export class Conversations {
             ...teammates.map((t) => `- ${t.name}${t.role ? `: ${t.role}` : ""}`),
           ].join("\n")
         : "",
+      "When the user asks for something recurring or for later (\"every morning…\", \"tomorrow at 9…\"), create a routine with create_routine instead of only promising to do it. Confirm the name and schedule back to them.",
       "Messages marked [Scheduled routine] run on a schedule while the user may be away: do the whole task without asking questions, then end with a short report of what you did and found.",
       "Messages marked [From bot …] come from a teammate, not the user: do what they ask and end with a clear, self-contained answer; that answer is sent back to them. Ask them questions only if you truly can't proceed.",
       "Reply in the same language the user writes in, and be direct.",
@@ -403,7 +507,8 @@ function friendlyProviderError(err: unknown): string {
 const stepVerb = (tool: string) =>
   ({ click: "click", type_text: "type", press_key: "press the key", hotkey: "use the shortcut", scroll: "scroll",
      open_app: "open the app", shell: "run the command", screenshot: "see the screen", wait: "wait",
-     ask_bot: "ask the teammate" } as Record<string, string>)[tool] ?? tool;
+     ask_bot: "ask the teammate", create_routine: "create the routine", delete_routine: "delete the routine",
+     list_routines: "list routines", remember: "save the memory", recall: "search memory", forget: "forget the memory" } as Record<string, string>)[tool] ?? tool;
 
 /** Docker reports a stopped container this way; there is no point retrying. */
 function deviceOff(err: unknown) {

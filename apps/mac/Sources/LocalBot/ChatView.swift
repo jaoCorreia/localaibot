@@ -8,7 +8,7 @@ struct ChatView: View {
     @State private var tab: Tab = .chat
     @FocusState private var focused: Bool
 
-    enum Tab { case chat, routines }
+    enum Tab { case chat, routines, memory }
 
     private var messages: [Brain.Message] { brain.messages[bot.id] ?? [] }
     private var deviceName: String {
@@ -23,6 +23,8 @@ struct ChatView: View {
             tabs
             if tab == .routines {
                 RoutinesView(model: model, brain: brain, bot: bot)
+            } else if tab == .memory {
+                MemoryView(brain: brain, bot: bot)
             } else if messages.isEmpty {
                 Placeholder(icon: "bubble.left", text: "Chat with \(bot.name)",
                             detail: ready ? "Give it a task or ask a question." : "Add an AI provider in Settings to start.")
@@ -59,6 +61,7 @@ struct ChatView: View {
         return HStack(spacing: 4) {
             TabPill(title: "Chat", selected: tab == .chat) { tab = .chat }
             TabPill(title: count > 0 ? "Routines · \(count)" : "Routines", selected: tab == .routines) { tab = .routines }
+            TabPill(title: "Memory", selected: tab == .memory) { tab = .memory }
             Spacer()
         }
         .padding(.horizontal, 14).padding(.bottom, 6)

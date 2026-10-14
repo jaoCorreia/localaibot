@@ -4,6 +4,8 @@ import SwiftUI
 /// cards of label/control rows on the right.
 struct SettingsSheet: View {
     @ObservedObject var brain: Brain
+    /// Reopens the first-run setup assistant.
+    var onRunSetup: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
     enum Page: Hashable {
@@ -50,6 +52,7 @@ struct SettingsSheet: View {
             SidebarGroup("General") {
                 SidebarItem(icon: "circle.lefthalf.filled", title: "Appearance", selected: page == .appearance) { page = .appearance }
                 SidebarItem(icon: "sparkles", title: "Default model", selected: page == .defaults) { page = .defaults }
+                SidebarItem(icon: "wand.and.stars", title: "Setup assistant", muted: true, selected: false) { onRunSetup() }
             }
 
             SidebarGroup("AI Providers") {
@@ -470,7 +473,7 @@ struct NewProviderForm: View {
             .buttonStyle(.plain).foregroundStyle(Theme.secondary).padding(.bottom, 14)
 
             PageHeader(title: "Add \(preset.label)", subtitle: providerSubtitle(preset), icon: presetSymbol(preset.id))
-            ConnectionCard(preset: preset, label: $label, baseURL: $baseURL, key: $key, keyPlaceholder: "Paste the key")
+            ConnectionCard(preset: preset, label: $label, baseURL: $baseURL, key: $key)
             HStack {
                 Spacer()
                 PillButton(title: saving ? "Adding…" : "Add provider", systemImage: "plus", prominent: true) {
@@ -515,14 +518,16 @@ struct ProviderPage: View {
                        icon: presetSymbol(entry.preset),
                        badge: entry.configured ? ("Ready", Theme.live) : ("Needs a key", Theme.warn))
 
-            ConnectionCard(preset: preset, label: $label, baseURL: $baseURL, key: $key, keyPlaceholder: keyPlaceholder) {
-                if entry.keySource == "config" {
-                    Button("Remove saved key") {
-                        Task { await brain.updateProvider(entry.id, label: entry.label, baseURL: entry.baseURL, apiKey: "") }
+            ConnectionCard(
+                preset: preset, label: $label, baseURL: $baseURL, key: $key,
+                saved: entry.keyHint.map { SavedKey(hint: $0, source: entry.keySource ?? "keychain") },
+                onRemoveKey: {
+                    Task {
+                        await brain.updateProvider(entry.id, label: entry.label, baseURL: entry.baseURL, apiKey: "")
+                        runTest()
                     }
-                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.secondary)
                 }
-            }
+            )
 
             if dirty {
                 HStack(spacing: 8) {
@@ -562,12 +567,6 @@ struct ProviderPage: View {
         }
     }
 
-    private var keyPlaceholder: String {
-        guard let hint = entry.keyHint else { return "Paste the key" }
-        if entry.keySource == "env" { return "From \(preset?.envKey ?? "environment") · \(hint)" }
-        return "Saved · \(hint) — paste to replace"
-    }
-
     private var testDetail: String {
         if testing { return "Checking…" }
         guard let test else { return "Not checked yet" }
@@ -599,14 +598,23 @@ struct ProviderPage: View {
     }
 }
 
+/// A key that's already stored: where it lives and its last four characters.
+struct SavedKey {
+    let hint: String      // "…3059"
+    let source: String    // "keychain" | "env"
+}
+
 /// Name, URL and key rows shared by "add" and "edit".
-struct ConnectionCard<Extra: View>: View {
+struct ConnectionCard: View {
     let preset: Brain.ProviderStatus.Preset?
     @Binding var label: String
     @Binding var baseURL: String
+    /// A new key typed by the user ("" = keep what's stored).
     @Binding var key: String
-    let keyPlaceholder: String
-    @ViewBuilder var extra: Extra
+    var saved: SavedKey?
+    var onRemoveKey: (() -> Void)?
+
+    @State private var replacing = false
 
     var body: some View {
         Card(title: "Connection") {
@@ -621,29 +629,55 @@ struct ConnectionCard<Extra: View>: View {
                 }
             }
             if preset?.keyless != true {
-                SettingRow(label: "API key", detail: preset?.id == "custom" ? "Optional" : nil) {
+                SettingRow(label: "API key", detail: keyDetail) {
                     VStack(alignment: .trailing, spacing: 6) {
-                        InlineField(text: $key, placeholder: keyPlaceholder, secure: true)
-                        HStack(spacing: 12) {
-                            extra
-                            if let url = preset?.keyURL.flatMap(URL.init(string:)) {
-                                Link(destination: url) {
-                                    Label("Get a key", systemImage: "arrow.up.right").font(.system(size: 11))
+                        if let saved, !replacing {
+                            HStack(spacing: 8) {
+                                SavedKeyPill(saved: saved)
+                                PillButton(title: "Replace", systemImage: "arrow.triangle.2.circlepath") { replacing = true }
+                                if let onRemoveKey, saved.source == "keychain" {
+                                    IconButton(systemImage: "trash", help: "Remove key") { onRemoveKey() }
                                 }
-                                .foregroundStyle(Theme.secondary)
                             }
+                        } else {
+                            HStack(spacing: 6) {
+                                InlineField(text: $key, placeholder: saved == nil ? "Paste your API key" : "Paste the new key", secure: true)
+                                if saved != nil {
+                                    IconButton(systemImage: "xmark", help: "Keep the current key") { key = ""; replacing = false }
+                                }
+                            }
+                        }
+                        if let url = preset?.keyURL.flatMap(URL.init(string:)) {
+                            Link(destination: url) {
+                                Label("Get a key", systemImage: "arrow.up.right").font(.system(size: 11))
+                            }
+                            .foregroundStyle(Theme.secondary)
                         }
                     }
                 }
             }
         }
+        .onChange(of: saved?.hint) { replacing = false }
+    }
+
+    private var keyDetail: String? {
+        if preset?.id == "custom" { return "Optional" }
+        return "Stored securely in your Mac’s Keychain"
     }
 }
 
-extension ConnectionCard where Extra == EmptyView {
-    init(preset: Brain.ProviderStatus.Preset?, label: Binding<String>, baseURL: Binding<String>,
-         key: Binding<String>, keyPlaceholder: String) {
-        self.init(preset: preset, label: label, baseURL: baseURL, key: key, keyPlaceholder: keyPlaceholder) { EmptyView() }
+/// A stored key, shown only as dots.
+struct SavedKeyPill: View {
+    let saved: SavedKey
+
+    var body: some View {
+        Text("••••••••••••")
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Theme.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Capsule().fill(Theme.window))
+            .overlay(Capsule().stroke(Theme.border))
+            .accessibilityLabel("Saved API key")
     }
 }
 

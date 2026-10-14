@@ -1,12 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { secrets } from "../secrets.ts";
 import { HOME, Settings } from "../store.ts";
 import { OpenAICompatibleProvider } from "./openai-compatible.ts";
 import type { ChatProvider } from "./types.ts";
 
-// Keys can live in ~/.local-bot/.env (0600) instead of the shell environment.
+// Legacy: keys used to live in ~/.local-bot/.env. initProviders() moves them
+// into the Keychain; anything left there is still honored.
 const envFile = join(HOME, ".env");
 if (existsSync(envFile)) process.loadEnvFile(envFile);
+
+const account = (providerId: string) => `provider:${providerId}`;
 
 /**
  * Known services. All of them speak the OpenAI Chat Completions API, so one
@@ -104,7 +108,51 @@ function config(id: string): ProviderConfig {
   return c;
 }
 
-const keyOf = (c: ProviderConfig) => c.apiKey || (preset(c.preset).envKey ? process.env[preset(c.preset).envKey!] : undefined);
+const envKeyOf = (c: ProviderConfig) => (preset(c.preset).envKey ? process.env[preset(c.preset).envKey!] : undefined);
+const keyOf = (c: ProviderConfig) => secrets.get(account(c.id)) || envKeyOf(c);
+
+/**
+ * Loads keys from the Keychain and migrates old plain-text keys into it:
+ * keys saved in config.json, and keys in ~/.local-bot/.env (whose lines are
+ * then commented out). Call once before serving requests.
+ */
+export async function initProviders() {
+  const all = settings.value.providers;
+  await secrets.load(all.map((c) => account(c.id)));
+
+  // config.json → Keychain
+  let moved = false;
+  const cleaned = [];
+  for (const c of all) {
+    if (c.apiKey) {
+      if (!secrets.get(account(c.id))) await secrets.set(account(c.id), c.apiKey);
+      const { apiKey, ...rest } = c;
+      cleaned.push(rest);
+      moved = true;
+    } else {
+      cleaned.push(c);
+    }
+  }
+  if (moved) settings.update({ providers: cleaned });
+
+  // .env → Keychain
+  if (existsSync(envFile)) {
+    const lines = readFileSync(envFile, "utf8").split("\n");
+    let changed = false;
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$/.exec(lines[i]);
+      if (!m) continue;
+      const p = PRESETS.find((x) => x.envKey === m[1]);
+      const c = p && settings.value.providers.find((x) => x.preset === p.id);
+      if (!c) continue;
+      if (!secrets.get(account(c.id))) await secrets.set(account(c.id), m[2].replace(/^["']|["']$/g, ""));
+      lines[i] = `# ${lines[i]}  # moved to the macOS Keychain by Local Bot`;
+      delete process.env[m[1]];
+      changed = true;
+    }
+    if (changed) writeFileSync(envFile, lines.join("\n"), { mode: 0o600 });
+  }
+}
 
 const clients = new Map<string, { signature: string; client: ChatProvider }>();
 
@@ -121,7 +169,7 @@ export function provider(id: string): ChatProvider {
     baseURL: c.baseURL.replace(/\/+$/, ""),
     apiKey: () => keyOf(config(id)),
     headers: p.headers,
-    keyless: p.keyless || (p.id === "custom" && !c.apiKey),
+    keyless: p.keyless || (p.id === "custom" && !keyOf(c)),
   });
   clients.set(id, { signature, client });
   return client;
@@ -133,6 +181,7 @@ export function providerStatus() {
     defaultProvider: settings.value.defaultProvider,
     defaultModel: settings.value.defaultModel,
     presets: PRESETS.map(({ headers, ...p }) => p),
+    secretStore: secrets.storeLabel,
     providers: settings.value.providers.map((c) => {
       const p = preset(c.preset);
       const key = keyOf(c);
@@ -144,46 +193,49 @@ export function providerStatus() {
         local: !!p.local,
         keyless: !!p.keyless,
         configured: !!c.baseURL && (!!p.keyless || !!key || (p.id === "custom")),
-        keySource: c.apiKey ? "config" : key ? "env" : null,
+        keySource: secrets.get(account(c.id)) ? "keychain" : key ? "env" : null,
         keyHint: key ? `…${key.slice(-4)}` : null,
       };
     }),
   };
 }
 
-export function addProvider(input: { preset: string; label?: string; baseURL?: string; apiKey?: string }) {
-  const c = fromPreset(input.preset, input);
+export async function addProvider(input: { preset: string; label?: string; baseURL?: string; apiKey?: string }) {
+  const { apiKey, ...c } = fromPreset(input.preset, input);
   if (!c.baseURL) throw new Error("Enter the provider base URL");
-  const providers = [...settings.value.providers, c];
+  if (apiKey) await secrets.set(account(c.id), apiKey);
   const first = settings.value.providers.length === 0;
   settings.update({
-    providers,
+    providers: [...settings.value.providers, c],
     ...(first ? { defaultProvider: c.id, defaultModel: preset(c.preset).suggestedModel ?? settings.value.defaultModel } : {}),
   });
   return c.id;
 }
 
-export function updateProvider(id: string, patch: { label?: string; baseURL?: string; apiKey?: string }) {
-  const providers = settings.value.providers.map((c) => {
-    if (c.id !== id) return c;
-    return {
-      ...c,
-      ...(patch.label?.trim() ? { label: patch.label.trim() } : {}),
-      ...(patch.baseURL?.trim() ? { baseURL: patch.baseURL.trim() } : {}),
-      // undefined keeps the key, "" removes it.
-      ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey.trim() || undefined } : {}),
-    };
+/** `apiKey`: undefined keeps the stored key, "" removes it, anything else replaces it. */
+export async function updateProvider(id: string, patch: { label?: string; baseURL?: string; apiKey?: string }) {
+  config(id);
+  if (patch.apiKey !== undefined) {
+    if (patch.apiKey.trim()) await secrets.set(account(id), patch.apiKey.trim());
+    else await secrets.delete(account(id));
+  }
+  settings.update({
+    providers: settings.value.providers.map((c) =>
+      c.id !== id ? c : {
+        ...c,
+        ...(patch.label?.trim() ? { label: patch.label.trim() } : {}),
+        ...(patch.baseURL?.trim() ? { baseURL: patch.baseURL.trim() } : {}),
+      }),
   });
-  settings.update({ providers });
 }
 
-export function removeProvider(id: string) {
+export async function removeProvider(id: string) {
+  await secrets.delete(account(id));
   const providers = settings.value.providers.filter((c) => c.id !== id);
   clients.delete(id);
-  const fallback = providers[0]?.id ?? "";
   settings.update({
     providers,
-    ...(settings.value.defaultProvider === id ? { defaultProvider: fallback } : {}),
+    ...(settings.value.defaultProvider === id ? { defaultProvider: providers[0]?.id ?? "" } : {}),
   });
 }
 

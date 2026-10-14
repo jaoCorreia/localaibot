@@ -99,6 +99,50 @@ export const ASK_BOT_TOOL: ToolSpec = {
   },
 };
 
+/** The bot managing its own routines when the user asks ("every morning, do X"). */
+export const ROUTINE_TOOLS: ToolSpec[] = [
+  {
+    name: "create_routine",
+    description:
+      "Create a routine: a task you will do on your own on a schedule. Use it when the user asks for something " +
+      "recurring or at a later time. Times are the user's local time.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short name, e.g. 'Morning inbox summary'" },
+        task: { type: "string", description: "Complete, self-contained instructions for each run" },
+        schedule: {
+          type: "object",
+          description:
+            "One of: {kind:'daily', time:'HH:MM', days:[0-6] (0=Sunday; [] = every day)} | " +
+            "{kind:'interval', every:N, unit:'minutes'|'hours'} (minimum 5 minutes) | " +
+            "{kind:'once', at:'YYYY-MM-DDTHH:MM'} (local time, no timezone)",
+          properties: {
+            kind: { type: "string", enum: ["daily", "interval", "once"] },
+            time: { type: "string" },
+            days: { type: "array", items: { type: "integer", minimum: 0, maximum: 6 } },
+            every: { type: "integer", minimum: 1 },
+            unit: { type: "string", enum: ["minutes", "hours"] },
+            at: { type: "string" },
+          },
+          required: ["kind"],
+        },
+      },
+      required: ["name", "task", "schedule"],
+    },
+  },
+  {
+    name: "list_routines",
+    description: "List your routines with their schedule, status and next run.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "delete_routine",
+    description: "Delete one of your routines by name (when the user asks to cancel or remove it).",
+    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+  },
+];
+
 export interface ToolOutcome {
   /** Text sent back to the model as the tool result. */
   result: string;

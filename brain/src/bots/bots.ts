@@ -11,6 +11,8 @@ export interface Bot {
   model: string;
   avatarSeed: string;
   createdAt: string;
+  /** Learn from finished tasks in the background (default on). */
+  memoryAuto?: boolean;
 }
 
 /**
@@ -64,7 +66,7 @@ export class Bots {
     return this.view(bot);
   }
 
-  update(id: string, patch: Partial<Pick<Bot, "name" | "role" | "instructions" | "provider" | "model" | "avatarSeed">>): BotView {
+  update(id: string, patch: Partial<Pick<Bot, "name" | "role" | "instructions" | "provider" | "model" | "avatarSeed" | "memoryAuto">>): BotView {
     const bot = { ...this.get(id), ...patch };
     if (!bot.name.trim()) throw new Error("The bot needs a name");
     this.bots.upsert(bot);

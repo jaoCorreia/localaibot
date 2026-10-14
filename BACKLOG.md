@@ -55,4 +55,18 @@ answer returns to the asker; loop, depth, busy and timeout guards).
 - **Rename `computers.*` to `devices.*`** in the brain protocol (the UI already
   says Devices).
 - **Shells for Windows and Linux** reusing the brain.
-- **Long-term memory** per bot (today it's only the last 40 chat messages).
+
+## Memory
+
+Done: local long-term memory (SQLite + FTS5 in ~/.local-bot/memory.db) with
+core / facts (superseded, history kept) / how-tos / episodes, per bot or team;
+remember / recall / forget tools; relevant memories injected each turn;
+background consolidation after tasks; old chat folded into a running summary;
+Memory tab to search, edit, pin, forget and delete.
+
+- **Semantic search:** add embeddings (local via Ollama, or the provider's)
+  next to BM25 for recall by meaning, not just words.
+- **Consolidation passes over time:** periodically merge duplicates and resolve
+  contradictions across all of a bot's memories ("sleep-time" pass).
+- **Memory evals:** a small LongMemEval/LoCoMo-style check on our own chats.
+- **Refresh other bots' Memory tabs** when a team memory changes.

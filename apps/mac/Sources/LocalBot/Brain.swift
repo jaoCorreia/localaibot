@@ -58,6 +58,7 @@ final class Brain: ObservableObject {
         let avatar: String            // SVG
         let avatarSeed: String        // catalog spec ("v1:…") or legacy seed
         let face: Face
+        let memoryAuto: Bool?
         let computers: [Access]
 
         var ownedComputer: String? { computers.first { $0.role == "owner" }?.computerId }
@@ -190,6 +191,7 @@ final class Brain: ObservableObject {
     @Published private(set) var messages: [String: [Message]] = [:]
     @Published private(set) var thinking: Set<String> = []
     @Published private(set) var routines: [Routine] = []
+    @Published private(set) var memories: [String: [Memory]] = [:]
     @Published private(set) var providerStatus: ProviderStatus?
     /// Model lists per provider id.
     @Published private(set) var models: [String: [Model]] = [:]
@@ -285,6 +287,11 @@ final class Brain: ObservableObject {
             lastError = error.localizedDescription
             return nil
         }
+    }
+
+    func renameDevice(_ id: String, to name: String) async {
+        await perform("computers.rename", ["id": id, "name": name])
+        await refreshComputers()
     }
 
     func removeDevice(_ id: String) async {
@@ -393,6 +400,56 @@ final class Brain: ObservableObject {
 
     func previewAvatar(seed: String) async -> String? {
         try? await request("bots.previewAvatar", ["seed": seed])
+    }
+
+    // MARK: Memory
+
+    struct Memory: Decodable, Identifiable, Hashable {
+        let id: String
+        let botId: String?          // nil = shared with the team
+        let kind: String            // core | fact | procedure | episode
+        let text: String
+        let topic: String?
+        let source: String          // bot | user | learned
+        let importance: Int
+        let createdAt: String
+        let updatedAt: String
+        let validTo: String?
+        let useCount: Int
+    }
+
+    func refreshMemory(_ botID: String) async {
+        if let list: [Memory] = try? await request("memory.list", ["botId": botID]) { memories[botID] = list }
+    }
+
+    func addMemory(bot: String, kind: String, text: String, topic: String?, team: Bool) async {
+        var params: [String: Any] = ["botId": bot, "kind": kind, "text": text, "scope": team ? "team" : "me"]
+        if let topic, !topic.isEmpty { params["topic"] = topic }
+        await perform("memory.add", params)
+        await refreshMemory(bot)
+    }
+
+    func editMemory(_ id: String, bot: String, text: String? = nil, kind: String? = nil) async {
+        var params: [String: Any] = ["id": id, "botId": bot]
+        if let text { params["text"] = text }
+        if let kind { params["kind"] = kind }
+        await perform("memory.edit", params)
+        await refreshMemory(bot)
+    }
+
+    func forgetMemory(_ id: String, bot: String) async {
+        await perform("memory.forget", ["id": id, "botId": bot])
+        await refreshMemory(bot)
+    }
+
+    func deleteMemory(_ id: String, bot: String) async {
+        await perform("memory.delete", ["id": id, "botId": bot])
+        await refreshMemory(bot)
+    }
+
+    func setMemoryAuto(_ on: Bool, bot: String) async {
+        await perform("bots.update", ["id": bot, "memoryAuto": on])
+        await refreshBots()
     }
 
     // MARK: Routines
@@ -577,6 +634,10 @@ final class Brain: ObservableObject {
             Task { await refreshComputers() }
         case "routines":
             Task { await refreshRoutines() }
+        case "memory":
+            if let botID = (data as? [String: Any])?["botId"] as? String, memories[botID] != nil {
+                Task { await refreshMemory(botID) }
+            }
         case "providers":
             Task { await refreshProviders() }
         default:

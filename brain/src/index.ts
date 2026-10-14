@@ -2,10 +2,12 @@ import { createInterface } from "node:readline";
 import { avatarOptions, avatarSVG, randomAvatar } from "./bots/avatar.ts";
 import { Bots } from "./bots/bots.ts";
 import { Conversations } from "./chat/conversations.ts";
-import { addProvider, provider, providerStatus, removeProvider, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
+import { addProvider, initProviders, provider, providerStatus, removeProvider, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
 import { DockerProvider } from "./computers/docker.ts";
 import { LumeProvider } from "./computers/lume.ts";
 import { Routines } from "./routines/routines.ts";
+import { MemoryService } from "./memory/memory.ts";
+import { Collection } from "./store.ts";
 import type { ComputerProvider } from "./computers/types.ts";
 
 /**
@@ -30,6 +32,14 @@ function computerProvider(id: string) {
 
 const bots = new Bots();
 
+/**
+ * Display names chosen by the user. Kept here rather than on the device:
+ * Docker labels can't change after a container is created, and Lume names
+ * are folder names.
+ */
+const deviceNames = new Collection<{ id: string; name: string }>("device-names.json");
+const named = <T extends { id: string; name: string }>(c: T): T => ({ ...c, name: deviceNames.get(c.id)?.name ?? c.name });
+
 /** A bot works on its own computer first, then on any computer it was granted. */
 const conversations = new Conversations(emit, async (bot) => {
   const view = bots.list().find((b) => b.id === bot.id);
@@ -39,7 +49,7 @@ const conversations = new Conversations(emit, async (bot) => {
     const hands = await p.hands?.(access.computerId, `bot-${bot.id.slice(0, 8)}`);
     if (!hands) continue;
     const computer = (await p.list()).find((c) => c.id === access.computerId);
-    return { hands, computerName: computer?.name ?? access.computerId };
+    return { hands, computerName: computer ? named(computer).name : access.computerId };
   }
   return null;
 }, () => bots.list());
@@ -52,7 +62,16 @@ const routines = new Routines(
   (botId) => conversations.isBusy(botId),
   () => emit("routines", null),
 );
-routines.start();
+conversations.attachRoutines(routines);
+
+/** Long-term memory; consolidation and summaries use each bot's own model. */
+const memory = new MemoryService(
+  async (bot, messages) =>
+    (await provider(bot.provider).chat({ model: bot.model, messages, onDelta: () => {} })).text,
+  (botId) => emit("memory", { botId }),
+);
+conversations.attachMemory(memory);
+// Started once keys are loaded (see `ready` below).
 
 type Handler = (params: any) => unknown | Promise<unknown>;
 
@@ -61,7 +80,7 @@ const methods: Record<string, Handler> = {
   "computers.list": async () => {
     const usable = await Promise.all(computerProviders.map(async (p) => ((await p.available()) ? p : null)));
     const lists = await Promise.all(usable.filter((p): p is ComputerProvider => !!p).map((p) => p.list()));
-    return lists.flat().map((c) => ({ ...c, bots: bots.botsOn(c.id) }));
+    return lists.flat().map((c) => ({ ...named(c), bots: bots.botsOn(c.id) }));
   },
   /** What kinds of device can be added on this host (and what is coming). */
   "computers.kinds": async () => {
@@ -82,7 +101,16 @@ const methods: Record<string, Handler> = {
     emit("computers", null);
     return { id };
   },
+  "computers.rename": ({ id, name }) => {
+    const clean = String(name ?? "").trim();
+    if (!clean) throw new Error("The device needs a name");
+    if (clean.length > 40) throw new Error("Keep the name under 40 characters");
+    computerProvider(id);
+    deviceNames.upsert({ id, name: clean });
+    emit("computers", null);
+  },
   "computers.remove": async ({ id }) => {
+    deviceNames.remove((d) => d.id === id);
     const p = computerProvider(id);
     if (!p.remove) throw new Error(`${p.name} devices can’t be removed from here`);
     await p.remove(id);
@@ -131,6 +159,7 @@ const methods: Record<string, Handler> = {
   "bots.delete": ({ id }) => {
     conversations.clear(id);
     routines.deleteForBot(id);
+    memory.store.deleteForBot(id);
     bots.delete(id);
     botsChanged();
   },
@@ -145,6 +174,29 @@ const methods: Record<string, Handler> = {
     bots.revoke(botId, computerId);
     botsChanged();
   },
+
+  // Memory
+  "memory.list": ({ botId, history }) => memory.store.list(botId, !!history),
+  "memory.add": ({ botId, kind, text, topic, scope }) => {
+    bots.get(botId);
+    const m = memory.store.add({ botId: scope === "team" ? null : botId, kind: kind ?? "fact", text, topic, source: "user" });
+    emit("memory", { botId });
+    return m;
+  },
+  "memory.edit": ({ id, botId, ...patch }) => {
+    const m = memory.store.edit(id, patch);
+    emit("memory", { botId });
+    return m;
+  },
+  "memory.forget": ({ id, botId }) => {
+    memory.store.forget(id);
+    emit("memory", { botId });
+  },
+  "memory.delete": ({ id, botId }) => {
+    memory.store.delete(id);
+    emit("memory", { botId });
+  },
+  "memory.summary": ({ botId }) => memory.store.chatSummary(botId) ?? null,
 
   // Routines
   "routines.list": ({ botId }) => routines.list(botId),
@@ -164,18 +216,18 @@ const methods: Record<string, Handler> = {
 
   // Conversation providers (keys never leave the brain)
   "providers.status": () => providerStatus(),
-  "providers.add": (p) => {
-    const id = addProvider(p);
+  "providers.add": async (p) => {
+    const id = await addProvider(p);
     emit("providers", null);
     return { id, ...providerStatus() };
   },
-  "providers.update": ({ id, ...patch }) => {
-    updateProvider(id, patch);
+  "providers.update": async ({ id, ...patch }) => {
+    await updateProvider(id, patch);
     emit("providers", null);
     return providerStatus();
   },
-  "providers.remove": ({ id }) => {
-    removeProvider(id);
+  "providers.remove": async ({ id }) => {
+    await removeProvider(id);
     emit("providers", null);
     return providerStatus();
   },
@@ -203,8 +255,14 @@ rl.on("close", async () => {
   process.exit(0);
 });
 
+/** Keys load from the Keychain before the first request is served. */
+const ready = initProviders()
+  .catch((err) => log("couldn’t load keys:", err instanceof Error ? err.message : err))
+  .then(() => routines.start());
+
 async function handle(line: string) {
   if (!line.trim()) return;
+  await ready;
   let req: { id: number; method: string; params?: unknown };
   try {
     req = JSON.parse(line);

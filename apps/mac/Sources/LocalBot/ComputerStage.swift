@@ -295,6 +295,7 @@ struct DeviceMenu: View {
 
     var body: some View {
         Menu {
+            Button("Rename…") { model.rename(computer) }
             Button("Add bots…") { model.sheet = .addBots(computer.id) }
             Divider()
             if let removeBlocked {

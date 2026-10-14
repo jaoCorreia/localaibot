@@ -8,6 +8,7 @@ struct LocalBotApp: App {
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
         Appearance.current.apply()
+        NSApplication.shared.applicationIconImage = AppIcon.image()
     }
 
     var body: some Scene {
@@ -31,12 +32,14 @@ enum Sheet: Identifiable {
     case newDevice
     case addBots(String)   // device id
     case routine(botID: String, routineID: String?)
+    case onboarding
 
     var id: String {
         switch self {
         case .newDevice: return "new-device"
         case .addBots(let id): return "add-bots-\(id)"
         case .routine(let bot, let routine): return "routine-\(bot)-\(routine ?? "new")"
+        case .onboarding: return "onboarding"
         case .newBot: return "new"
         case .editBot(let id): return "edit-\(id)"
         case .settings: return "settings"
@@ -53,6 +56,14 @@ final class AppModel: ObservableObject {
     @Published var showChat = true
     /// Device waiting for the user to confirm its removal.
     @Published var removingDevice: Brain.Computer?
+    /// Device being renamed, and the name being typed.
+    @Published var renamingDevice: Brain.Computer?
+    @Published var newDeviceName = ""
+
+    func rename(_ device: Brain.Computer) {
+        newDeviceName = device.name
+        renamingDevice = device
+    }
     /// Bot waiting for the user to confirm its deletion, or its chat being cleared.
     @Published var deletingBot: Brain.Bot?
     @Published var clearingChat: Brain.Bot?
@@ -110,19 +121,43 @@ struct MainView: View {
         .foregroundStyle(Theme.text)
         .tint(Theme.text)
         .onAppear { brain.start() }
+        .task {
+            // First run: offer setup once the brain has reported what exists.
+            while brain.providerStatus == nil { try? await Task.sleep(for: .milliseconds(300)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            let done = UserDefaults.standard.bool(forKey: "onboardingDone")
+            if !done && (brain.providerStatus?.configured != true || brain.bots.isEmpty), model.sheet == nil {
+                model.sheet = .onboarding
+            }
+        }
         .onReceive(brain.$bots) { _ in fixSelection() }
         .onReceive(brain.$computers) { _ in fixSelection() }
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
             case .newBot: BotEditor(model: model, brain: brain, botID: nil)
             case .editBot(let id): BotEditor(model: model, brain: brain, botID: id)
-            case .settings: SettingsSheet(brain: brain)
+            case .settings: SettingsSheet(brain: brain) { model.sheet = .onboarding }
+            case .onboarding: OnboardingView(model: model, brain: brain)
             case .newDevice: NewDeviceSheet(model: model, brain: brain)
             case .addBots(let id): AddBotsSheet(model: model, brain: brain, deviceID: id)
             case .routine(let bot, let routine): RoutineEditor(brain: brain, botID: bot, routineID: routine)
             }
         }
         .overlay(alignment: .bottom) { ErrorToast(brain: brain) }
+        .alert("Rename device", isPresented: Binding(
+            get: { model.renamingDevice != nil }, set: { if !$0 { model.renamingDevice = nil } })
+        ) {
+            TextField("Name", text: $model.newDeviceName)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") {
+                guard let device = model.renamingDevice else { return }
+                let name = model.newDeviceName
+                Task { await brain.renameDevice(device.id, to: name) }
+            }
+            .disabled(model.newDeviceName.trimmingCharacters(in: .whitespaces).isEmpty)
+        } message: {
+            Text("Bots see this name too.")
+        }
         .confirmationDialog("Remove \(model.removingDevice?.name ?? "device")?", isPresented: Binding(
             get: { model.removingDevice != nil }, set: { if !$0 { model.removingDevice = nil } })
         ) {
