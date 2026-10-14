@@ -63,7 +63,9 @@ struct VNCScreen: NSViewRepresentable {
         guard var parts = URLComponents(string: url) else { return nil }
         var query = [URLQueryItem(name: "scale", value: "1"), URLQueryItem(name: "reconnect", value: "1")]
         if !controlling { query.append(URLQueryItem(name: "view_only", value: "1")) }
-        parts.queryItems = query
+        // Keep the device's own query (a remote device's token opens its screen).
+        let own = (parts.queryItems ?? []).filter { !["scale", "reconnect", "view_only"].contains($0.name) }
+        parts.queryItems = own + query
         return parts.url
     }
 

@@ -336,6 +336,15 @@ final class Brain: ObservableObject {
         let detail: String
         let available: Bool
         let reason: String?
+        /// Extra inputs this kind needs to create a device (URL, token…).
+        let fields: [KindField]?
+    }
+
+    struct KindField: Decodable, Identifiable, Hashable {
+        let id: String
+        let label: String
+        let placeholder: String
+        let secure: Bool
     }
 
     func deviceKinds() async -> [DeviceKind] {
@@ -343,9 +352,9 @@ final class Brain: ObservableObject {
     }
 
     /// Returns the new device id, or nil (error in `lastError`).
-    func createDevice(kind: String, name: String) async -> String? {
+    func createDevice(kind: String, name: String, options: [String: String] = [:]) async -> String? {
         do {
-            let raw = try await call("computers.create", ["kind": kind, "name": name])
+            let raw = try await call("computers.create", ["kind": kind, "name": name, "options": options])
             await refreshComputers()
             return (raw as? [String: Any])?["id"] as? String
         } catch {

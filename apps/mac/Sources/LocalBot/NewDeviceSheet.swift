@@ -11,6 +11,8 @@ struct NewDeviceSheet: View {
     @State private var kind: String?
     @State private var name = ""
     @State private var creating = false
+    /// Values for the selected kind's extra fields.
+    @State private var values: [String: String] = [:]
 
     private var selected: Brain.DeviceKind? { kinds.first { $0.id == kind } }
 
@@ -33,8 +35,17 @@ struct NewDeviceSheet: View {
             }
             if kinds.isEmpty { ProgressView().controlSize(.small).frame(maxWidth: .infinity) }
 
-            if selected != nil {
+            if let selected {
                 Field(label: "Name", text: $name, placeholder: "e.g. Sales desktop")
+                ForEach(selected.fields ?? []) { f in
+                    Field(label: f.label, text: binding(f.id), placeholder: f.placeholder, secure: f.secure)
+                }
+            }
+
+            if kind == "railway" {
+                Label("Creates a service in a “Local Bot” project on your Railway account. The first start takes a few minutes; removing the device deletes the service.",
+                      systemImage: "info.circle")
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
             }
 
             if kind == "lume" {
@@ -47,7 +58,7 @@ struct NewDeviceSheet: View {
                 Spacer()
                 PillButton(title: "Cancel", systemImage: "xmark") { dismiss() }
                 PillButton(title: creating ? "Creating…" : "Create device", systemImage: "plus", prominent: true) { create() }
-                    .disabled(kind == nil || name.trimmingCharacters(in: .whitespaces).isEmpty || creating)
+                    .disabled(kind == nil || name.trimmingCharacters(in: .whitespaces).isEmpty || creating || missingField)
             }
         }
         .padding(26)
@@ -63,8 +74,19 @@ struct NewDeviceSheet: View {
         }
     }
 
+    private func binding(_ id: String) -> Binding<String> {
+        Binding(get: { values[id] ?? "" }, set: { values[id] = $0 })
+    }
+
+    /// Required fields (all but the optional ones) still empty.
+    private var missingField: Bool {
+        (selected?.fields ?? []).contains { f in
+            !f.label.contains("optional") && (values[f.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
     private func defaultName(_ kind: String) -> String {
-        let base = kind == "lume" ? "Mac" : "Linux"
+        let base = kind == "lume" ? "Mac" : kind == "railway" ? "Cloud Linux" : kind == "remote" ? "Remote" : "Linux"
         let taken = Set(brain.computers.map(\.name))
         if !taken.contains(base) { return base }
         return (2...99).map { "\(base) \($0)" }.first { !taken.contains($0) } ?? base
@@ -74,7 +96,9 @@ struct NewDeviceSheet: View {
         guard let kind else { return }
         creating = true
         Task {
-            if let id = await brain.createDevice(kind: kind, name: name.trimmingCharacters(in: .whitespaces)) {
+            let fields = Set((selected?.fields ?? []).map(\.id))
+            let options = values.filter { fields.contains($0.key) }.mapValues { $0.trimmingCharacters(in: .whitespaces) }
+            if let id = await brain.createDevice(kind: kind, name: name.trimmingCharacters(in: .whitespaces), options: options) {
                 model.selection = .computer(id)
                 dismiss()
             }
@@ -127,6 +151,8 @@ struct KindCard: View {
         switch kind.id {
         case "docker": return "terminal"
         case "lume": return "apple.logo"
+        case "railway": return "cloud"
+        case "remote": return "point.3.connected.trianglepath.dotted"
         case "ios-simulator": return "iphone"
         case "android-emulator": return "candybarphone"
         default: return "network"

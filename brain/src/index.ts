@@ -5,6 +5,8 @@ import { Conversations } from "./chat/conversations.ts";
 import { addProvider, initProviders, provider, providerStatus, removeProvider, resetProviders, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
 import { DockerProvider } from "./computers/docker.ts";
 import { LumeProvider } from "./computers/lume.ts";
+import { RailwayProvider } from "./computers/railway.ts";
+import { RemoteProvider } from "./computers/remote.ts";
 import { Routines } from "./routines/routines.ts";
 import { MemoryService } from "./memory/memory.ts";
 import { Collection } from "./store.ts";
@@ -18,7 +20,11 @@ import type { ComputerProvider } from "./computers/types.ts";
  */
 /** macOS VMs (Lume) aren't part of the first release yet; LOCALBOT_EXPERIMENTAL_MACOS=1 turns them on. */
 const macOSDevices = process.env.LOCALBOT_EXPERIMENTAL_MACOS === "1";
-const computerProviders: ComputerProvider[] = [new DockerProvider(), ...(macOSDevices ? [new LumeProvider()] : [])];
+const docker = new DockerProvider();
+const lume = macOSDevices ? new LumeProvider() : null;
+const railway = new RailwayProvider();
+const remoteDevices = new RemoteProvider();
+const computerProviders: ComputerProvider[] = [docker, ...(lume ? [lume] : []), railway, remoteDevices];
 
 function emit(event: string, data: unknown) {
   process.stdout.write(JSON.stringify({ event, data }) + "\n");
@@ -86,21 +92,38 @@ const methods: Record<string, Handler> = {
   },
   /** What kinds of device can be added on this host (and what is coming). */
   "computers.kinds": async () => {
-    const [docker, lume] = await Promise.all(computerProviders.map((p) => p.available()));
-    const macOS = macOSDevices && lume;
+    const [dockerUp, lumeUp] = await Promise.all([docker.available(), lume?.available() ?? false]);
     return [
-      { id: "docker", label: "Linux desktop", detail: "Debian + XFCE + Firefox in a container. Starts in seconds, ~1 GB.", available: docker, reason: docker ? null : "Docker isn’t running" },
-      { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: macOS, reason: macOS ? null : "Coming soon" },
+      { id: "docker", label: "Linux desktop", detail: "Debian + XFCE + Firefox in a container. Starts in seconds, ~1 GB.", available: dockerUp, reason: dockerUp ? null : "Docker isn’t running" },
+      { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: lumeUp, reason: lumeUp ? null : "Coming soon" },
+      {
+        id: "railway", label: "Linux in the cloud", detail: "The same desktop on your Railway account. Keeps working while your Mac sleeps; billed by Railway.",
+        available: true, reason: null,
+        fields: railway.configured ? [] : [
+          { id: "railwayToken", label: "Railway account token", placeholder: "From railway.com → Account → Tokens", secure: true },
+        ],
+      },
+      {
+        id: "remote", label: "Connect a machine", detail: "Any host running the Local Bot device agent, or an MCP server with screenshot, computer and shell tools.",
+        available: true, reason: null,
+        fields: [
+          { id: "url", label: "URL", placeholder: "https://my-device.example.com", secure: false },
+          { id: "token", label: "Token", placeholder: "LOCALBOT_TOKEN of the device", secure: true },
+          { id: "vncPassword", label: "Screen password (optional)", placeholder: "VNC_PW of the device", secure: true },
+        ],
+      },
       { id: "ios-simulator", label: "iOS Simulator", detail: "Drive iPhone and iPad apps.", available: false, reason: "Coming soon" },
       { id: "android-emulator", label: "Android Emulator", detail: "Drive Android apps.", available: false, reason: "Coming soon" },
-      { id: "remote", label: "Another computer", detail: "Pair a Mac, Windows or Linux machine over the network.", available: false, reason: "Coming soon" },
     ];
   },
-  "computers.create": async ({ kind, name }) => {
+  "computers.create": async ({ kind, name, options }) => {
     const p = computerProviders.find((x) => x.name === kind);
     if (!p?.create) throw new Error(`Can’t create ${kind} devices yet`);
     if (!String(name ?? "").trim()) throw new Error("The device needs a name");
-    const id = await p.create(String(name).trim());
+    const opts: Record<string, string> = { ...(options ?? {}) };
+    if (p === railway && opts.railwayToken) await railway.setToken(opts.railwayToken);
+    delete opts.railwayToken;
+    const id = await p.create(String(name).trim(), opts);
     emit("computers", null);
     return { id };
   },
@@ -282,7 +305,7 @@ rl.on("close", async () => {
 });
 
 /** Keys load from the Keychain before the first request is served. */
-const ready = initProviders()
+const ready = Promise.all([initProviders(), railway.load(), remoteDevices.load()])
   .catch((err) => log("couldn’t load keys:", err instanceof Error ? err.message : err))
   .then(() => routines.start());
 
