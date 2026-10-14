@@ -76,6 +76,20 @@ struct SettingsSheet: View {
                 }
             }
             Spacer()
+            VStack(alignment: .leading, spacing: 6) {
+                if Updater.shared.enabled {
+                    Button { Updater.shared.checkForUpdates() } label: {
+                        Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.secondary)
+                }
+                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    .textSelection(.enabled)
+            }
+            .padding(.leading, 12).padding(.bottom, 14)
         }
         .padding(.horizontal, 8)
     }

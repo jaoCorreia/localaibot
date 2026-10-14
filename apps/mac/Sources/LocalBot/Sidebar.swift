@@ -3,6 +3,7 @@ import SwiftUI
 struct Sidebar: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
+    @ObservedObject var updater: Updater
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -88,6 +89,10 @@ struct Sidebar: View {
             .fadesUnderTopBar(Theme.sidebar, height: 12)
 
             Spacer(minLength: 0)
+            if let version = updater.available {
+                UpdateBanner(version: version) { updater.checkForUpdates() }
+                    .padding(.horizontal, 12).padding(.top, 8)
+            }
             HStack {
                 ToolbarButton(systemImage: "gearshape", help: "Settings") { model.sheet = .settings }
                     .overlay(alignment: .topTrailing) {

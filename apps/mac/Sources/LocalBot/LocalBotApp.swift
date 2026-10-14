@@ -17,6 +17,12 @@ struct LocalBotApp: App {
                 .frame(minWidth: 760, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
+                    .disabled(!Updater.shared.enabled)
+            }
+        }
     }
 }
 
@@ -52,6 +58,7 @@ enum Sheet: Identifiable {
 @MainActor
 final class AppModel: ObservableObject {
     let brain = Brain()
+    let updater = Updater.shared
     @Published var selection: Selection?
     @Published var sheet: Sheet?
     @Published var showSidebar = true
@@ -100,7 +107,7 @@ struct MainView: View {
     var body: some View {
         HStack(spacing: 0) {
             if model.showSidebar {
-                Sidebar(model: model, brain: brain)
+                Sidebar(model: model, brain: brain, updater: model.updater)
                     .frame(width: sidebarWidth)
                     .transition(.move(edge: .leading))
                 ResizeHandle(width: $sidebarWidth, range: 200...380, defaultWidth: 248, edge: .leading)
@@ -122,7 +129,10 @@ struct MainView: View {
         .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Theme.text)
         .tint(Theme.text)
-        .onAppear { brain.start() }
+        .onAppear {
+            brain.start()
+            model.updater.start()
+        }
         .task {
             // First run only: decide after the brain has reported everything, and
             // only for a truly empty setup (no AI provider and no bots).
