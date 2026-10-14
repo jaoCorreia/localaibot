@@ -21,7 +21,7 @@ struct ComputerStage: View {
                                     detail: "Remove it from the sidebar and try again.")
                     } else {
                         VStack(spacing: 12) {
-                            ProgressView().controlSize(.regular)
+                            DeviceLoader(size: 120)
                             Text("Setting up \(computer.name)…").font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(Theme.secondary)
                             Text(computer.os == "macos" ? "Downloading and installing macOS. This can take a while." : "Almost ready.")
@@ -173,8 +173,16 @@ struct NativeVMStage: View {
                 if let vm = host.machine {
                     VMScreen(machine: vm)
                 } else {
-                    Placeholder(icon: "apple.logo",
-                                text: host.bundle.isReady ? "Device is off" : "Lume is still creating this VM")
+                    if host.bundle.isReady {
+                        Placeholder(icon: "apple.logo", text: "Device is off")
+                    } else {
+                        VStack(spacing: 12) {
+                            DeviceLoader(size: 120)
+                            Text("Lume is still creating this VM…").font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }

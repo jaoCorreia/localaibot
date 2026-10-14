@@ -22,7 +22,7 @@ struct BotEditor: View {
             HStack(spacing: 16) {
                 ZStack(alignment: .bottomTrailing) {
                     Button { choosingFace = true } label: {
-                        if let face { AnimatedFace(face: face, size: 64, seed: draft.avatarSeed) } else { Avatar(svg: avatar, size: 64) }
+                        if let face { AnimatedFace(face: face, size: 64, seed: draft.avatarSeed, followsPointer: true) } else { Avatar(svg: avatar, size: 64) }
                     }
                         .buttonStyle(.plain)
                         .help("Choose a face")
@@ -139,7 +139,7 @@ struct AvatarPicker: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 if let face = options?.face {
-                    AnimatedFace(face: face, size: 52, seed: value)
+                    AnimatedFace(face: face, size: 52, seed: value, followsPointer: true)
                 } else {
                     Avatar(svg: options?.svg ?? svg, size: 52)
                 }

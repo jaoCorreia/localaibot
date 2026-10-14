@@ -40,7 +40,8 @@ struct ChatView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            AnimatedFace(face: bot.face, size: 26, working: thinking, seed: bot.id)
+            AnimatedFace(face: bot.face, size: 26, working: thinking, seed: bot.id,
+                         failed: messages.last?.error != nil)
             VStack(alignment: .leading, spacing: 1) {
                 Text(bot.name).font(.system(size: 13, weight: .semibold))
                 Text(bot.model).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
@@ -168,7 +169,8 @@ struct MessageRow: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             HStack(alignment: .top, spacing: 10) {
-                Avatar(svg: bot.avatar, size: 22).padding(.top, 1)
+                AnimatedFace(face: bot.face, size: 22, working: streaming, seed: bot.id,
+                             failed: message.error != nil).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 6) {
                     if message.text.isEmpty && message.error == nil {
                         TypingDots()
