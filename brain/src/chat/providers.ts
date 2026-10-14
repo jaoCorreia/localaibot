@@ -34,7 +34,7 @@ export const PRESETS: Preset[] = [
   {
     id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", envKey: "OPENROUTER_API_KEY",
     suggestedModel: "anthropic/claude-haiku-5.5", keyURL: "https://openrouter.ai/keys",
-    headers: { "HTTP-Referer": "https://github.com/local-bot", "X-Title": "Local Bot" },
+    headers: { "HTTP-Referer": "https://github.com/patrick-mns/localbot", "X-Title": "Local Bot" },
   },
   { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", envKey: "OPENAI_API_KEY", keyURL: "https://platform.openai.com/api-keys" },
   { id: "anthropic", label: "Anthropic", baseURL: "https://api.anthropic.com/v1", envKey: "ANTHROPIC_API_KEY", suggestedModel: "claude-haiku-5-5", keyURL: "https://console.anthropic.com/settings/keys" },

@@ -29,7 +29,7 @@ lives in the brain so Windows/Linux shells can reuse it.
 ## Install
 
 Download `LocalBot-<version>.dmg` from
-[Releases](https://github.com/patrick-mns/local-bot/releases), open it and drag
+[Releases](https://github.com/patrick-mns/localbot/releases), open it and drag
 **Local Bot** to Applications.
 
 Requirements: a Mac with Apple silicon and macOS 14+, and
