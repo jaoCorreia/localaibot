@@ -89,7 +89,7 @@ desktop plus a small agent on one HTTP port, guarded by `LOCALBOT_TOKEN`:
 `shell`) and every other path serves the screen (noVNC). Anything that speaks
 those MCP tools can be a device, so new machine providers plug in the same way.
 
-- **Linux in the cloud (Railway):** paste a Railway account token once (it
+- **Linux in the cloud (Railway):** connect a Railway account token in Settings → Device Providers (it
   goes to the Keychain) and Local Bot creates a service per device in a
   "Local Bot" project, with its own domain, token and screen password.
   Removing the device deletes the service. Railway bills for the time it runs.

@@ -98,10 +98,7 @@ const methods: Record<string, Handler> = {
       { id: "lume", label: "macOS virtual machine", detail: "Full macOS via Apple Virtualization. ~17 GB download, 8 GB RAM; up to 2 running per Mac.", available: lumeUp, reason: lumeUp ? null : "Coming soon" },
       {
         id: "railway", label: "Linux in the cloud", detail: "The same desktop on your Railway account. Keeps working while your Mac sleeps; billed by Railway.",
-        available: true, reason: null,
-        fields: railway.configured ? [] : [
-          { id: "railwayToken", label: "Railway account token", placeholder: "From railway.com → Account → Tokens", secure: true },
-        ],
+        available: railway.configured, reason: railway.configured ? null : "Connect Railway in Settings",
       },
       {
         id: "remote", label: "Connect a machine", detail: "Any host running the Local Bot device agent, or an MCP server with screenshot, computer and shell tools.",
@@ -120,12 +117,23 @@ const methods: Record<string, Handler> = {
     const p = computerProviders.find((x) => x.name === kind);
     if (!p?.create) throw new Error(`Can’t create ${kind} devices yet`);
     if (!String(name ?? "").trim()) throw new Error("The device needs a name");
-    const opts: Record<string, string> = { ...(options ?? {}) };
-    if (p === railway && opts.railwayToken) await railway.setToken(opts.railwayToken);
-    delete opts.railwayToken;
-    const id = await p.create(String(name).trim(), opts);
+    const id = await p.create(String(name).trim(), options ?? {});
     emit("computers", null);
     return { id };
+  },
+  // Accounts of cloud device providers (Settings → Device providers)
+  "deviceProviders.status": () => [railway.account],
+  "deviceProviders.connect": async ({ id, token }) => {
+    if (id !== railway.name) throw new Error(`Unknown device provider: ${id}`);
+    await railway.setToken(String(token ?? ""));
+    emit("computers", null);
+    return [railway.account];
+  },
+  "deviceProviders.disconnect": async ({ id }) => {
+    if (id !== railway.name) throw new Error(`Unknown device provider: ${id}`);
+    await railway.disconnect();
+    emit("computers", null);
+    return [railway.account];
   },
   "computers.rename": ({ id, name }) => {
     const clean = String(name ?? "").trim();

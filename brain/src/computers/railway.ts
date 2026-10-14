@@ -50,6 +50,27 @@ export class RailwayProvider implements ComputerProvider {
     return this.configured;
   }
 
+  /** For Settings: whether an account is connected, and how many devices it holds. */
+  get account() {
+    const token = secrets.get(TOKEN_ACCOUNT);
+    return {
+      id: this.name,
+      label: "Railway",
+      detail: "Linux desktops on your Railway account, one service per device in a “Local Bot” project. Billed by Railway while they run.",
+      tokenLabel: "Account token",
+      tokenURL: "https://railway.com/account/tokens",
+      connected: !!token,
+      tokenHint: token ? `…${token.slice(-4)}` : null,
+      devices: this.devices.all().length,
+    };
+  }
+
+  /** Forgets the token. Devices stay on Railway; they come back when it's connected again. */
+  async disconnect() {
+    await secrets.delete(TOKEN_ACCOUNT);
+    this.status.clear();
+  }
+
   /** Checks the token against the API, then keeps it in the Keychain. */
   async setToken(token: string) {
     const clean = token.trim();

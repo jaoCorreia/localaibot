@@ -347,6 +347,40 @@ final class Brain: ObservableObject {
         let secure: Bool
     }
 
+    /// A cloud account devices are created on (Railway…), managed in Settings.
+    struct DeviceAccount: Decodable, Identifiable, Hashable {
+        let id: String
+        let label: String
+        let detail: String
+        let tokenLabel: String
+        let tokenURL: String?
+        let connected: Bool
+        let tokenHint: String?
+        let devices: Int
+    }
+
+    @Published private(set) var deviceAccounts: [DeviceAccount] = []
+
+    func refreshDeviceAccounts() async {
+        if let list: [DeviceAccount] = try? await request("deviceProviders.status") { deviceAccounts = list }
+    }
+
+    /// Returns an error message, or nil when the token was accepted.
+    func connectDeviceAccount(_ id: String, token: String) async -> String? {
+        do {
+            deviceAccounts = try await request("deviceProviders.connect", ["id": id, "token": token])
+            await refreshComputers()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func disconnectDeviceAccount(_ id: String) async {
+        if let list: [DeviceAccount] = try? await request("deviceProviders.disconnect", ["id": id]) { deviceAccounts = list }
+        await refreshComputers()
+    }
+
     func deviceKinds() async -> [DeviceKind] {
         (try? await request("computers.kinds")) ?? []
     }

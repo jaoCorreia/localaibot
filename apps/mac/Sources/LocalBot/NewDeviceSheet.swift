@@ -43,7 +43,7 @@ struct NewDeviceSheet: View {
             }
 
             if kind == "railway" {
-                Label("Creates a service in a “Local Bot” project on your Railway account. The first start takes a few minutes; removing the device deletes the service.",
+                Label("Creates a service in a “Local Bot” project on your Railway account (connected in Settings). The first start takes a few minutes; removing the device deletes the service.",
                       systemImage: "info.circle")
                     .font(.system(size: 11)).foregroundStyle(Theme.secondary)
             }
