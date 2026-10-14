@@ -152,3 +152,20 @@ test("stop aborts a running bot", async () => {
   await settle(conv, bots);
   assert.ok(!conv.isBusy(id.a));
 });
+
+test("a bot keeps working past many steps, and old tool outputs are shortened", async () => {
+  class LongOutput extends FakeHands {
+    override async shell(command: string) { this.actions.push(`shell ${command}`); return { code: 0, output: "x".repeat(2000) }; }
+  }
+  const hands = new LongOutput();
+  const steps: Step[] = Array.from({ length: 45 }, (_, i) => ({ tools: [{ name: "shell", args: { command: `echo ${i}` } }] }));
+  const { conv, fakes, bots, id } = setup({ a: [...steps, { text: "Pronto." }] }, { hands });
+  await conv.send(bots[0], "faz tudo");
+  await settle(conv, bots);
+  assert.equal(hands.actions.length, 45);
+  assert.equal(conv.history(id.a).at(-1)?.text, "Pronto.");
+  const outputs = fakes.a.requests.at(-1)!.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
+  assert.equal(outputs.length, 45);
+  assert.ok(outputs.slice(0, -20).every((o) => o.length < 400 && o.endsWith("(older output shortened)")));
+  assert.ok(outputs.slice(-20).every((o) => o.length > 2000));
+});

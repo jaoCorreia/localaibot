@@ -45,8 +45,13 @@ interface TurnOptions {
 
 /** How many past messages go back verbatim; older ones live in the chat summary. */
 const HISTORY_LIMIT = VERBATIM_MESSAGES;
-/** Upper bound on model round-trips per user message. */
-const MAX_STEPS = 30;
+/**
+ * There is no step limit: a bot works until it answers, the user presses Stop,
+ * or the device goes off. To keep long runs inside the model's context, only
+ * the latest tool outputs stay verbatim; older ones are shortened.
+ */
+const RECENT_TOOL_OUTPUTS = 20;
+const OLD_TOOL_OUTPUT_CHARS = 300;
 /** How many hops a request may travel: A → B → C, no further. */
 const MAX_DELEGATION_HOPS = 2;
 /** How long to wait for a busy teammate, and for a teammate's answer. */
@@ -180,7 +185,7 @@ export class Conversations {
       }
     }
 
-    for (let step = 0; step < MAX_STEPS && !signal.aborted; step++) {
+    while (!signal.aborted) {
       const reply = this.draft(bot);
       let result;
       try {
@@ -255,6 +260,7 @@ export class Conversations {
         }
         transcript.push({ role: "tool", tool_call_id: call.id, content });
       }
+      shortenOldToolOutputs(transcript);
 
       if (visual && place) {
         await new Promise((r) => setTimeout(r, 600));
@@ -270,9 +276,7 @@ export class Conversations {
         }
       }
     }
-    if (signal.aborted) return { ok: false, error: "Stopped" };
-    this.activity(bot, `Stopped after ${MAX_STEPS} steps`);
-    return { ok: false, error: `Didn’t finish within ${MAX_STEPS} steps` };
+    return { ok: false, error: "Stopped" };
   }
 
   /** The latest prompt in this bot's chat: what the memory search is about. */
@@ -534,6 +538,16 @@ function deviceOff(err: unknown) {
 }
 
 /** Keeps only the newest screenshot in context; older ones become a short note. */
+/** Keeps the latest tool outputs whole and trims older ones, so a long run fits the context. */
+export function shortenOldToolOutputs(transcript: ChatMessage[]) {
+  const tools = transcript.filter((m): m is Extract<ChatMessage, { role: "tool" }> => m.role === "tool");
+  for (const m of tools.slice(0, -RECENT_TOOL_OUTPUTS)) {
+    if (typeof m.content === "string" && m.content.length > OLD_TOOL_OUTPUT_CHARS) {
+      m.content = `${m.content.slice(0, OLD_TOOL_OUTPUT_CHARS)}\n…(older output shortened)`;
+    }
+  }
+}
+
 function dropOldScreens(transcript: ChatMessage[]) {
   for (const m of transcript) {
     if (m.role === "user" && Array.isArray(m.content) && m.content.some((p) => p.type === "image_url")) {
