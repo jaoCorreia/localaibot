@@ -690,8 +690,9 @@ struct DeviceAccountPage: View {
                             }
                         } else {
                             HStack(spacing: 6) {
-                                InlineField(text: $token, placeholder: "Paste your \(account.label) token", secure: true, width: 260)
+                                InlineField(text: $token, placeholder: "Paste your \(account.label) token", secure: true, width: 200)
                                 PillButton(title: saving ? "Checking…" : "Connect", systemImage: "checkmark", prominent: true) { connect() }
+                                    .fixedSize()
                                     .disabled(saving || token.trimmingCharacters(in: .whitespaces).isEmpty)
                                 if account.connected {
                                     IconButton(systemImage: "xmark", help: "Keep the current token") { token = ""; replacing = false; error = nil }
