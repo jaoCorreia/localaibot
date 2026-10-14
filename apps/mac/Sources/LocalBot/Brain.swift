@@ -29,6 +29,24 @@ final class Brain: ObservableObject {
             default: return os
             }
         }
+
+        /// Where it runs, so cloud and remote machines read differently from local ones.
+        var symbol: String {
+            switch provider {
+            case "railway": return "cloud"
+            case "remote": return "point.3.connected.trianglepath.dotted"
+            default: return os == "macos" ? "apple.logo" : "terminal"
+            }
+        }
+
+        /// "Cloud" / "Remote" for machines off this Mac, nil for local ones.
+        var placeLabel: String? {
+            switch provider {
+            case "railway": return "Cloud"
+            case "remote": return "Remote"
+            default: return nil
+            }
+        }
     }
 
     struct Access: Decodable, Hashable {

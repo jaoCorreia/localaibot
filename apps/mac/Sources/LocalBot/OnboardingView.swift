@@ -237,7 +237,7 @@ struct DeviceStep: View {
                 VStack(spacing: 6) {
                     ForEach(brain.computers) { c in
                         HStack(spacing: 10) {
-                            Image(systemName: c.os == "macos" ? "apple.logo" : "terminal").frame(width: 28)
+                            Image(systemName: c.symbol).frame(width: 28)
                             Text(c.name).font(.system(size: 13, weight: .medium))
                             Text(c.osLabel).font(.system(size: 12)).foregroundStyle(Theme.tertiary)
                             Spacer()
