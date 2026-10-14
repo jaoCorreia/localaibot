@@ -305,6 +305,9 @@ struct DeviceMenu: View {
         Menu {
             Button("Rename") { model.rename(computer) }
             Button("Add bots") { model.sheet = .addBots(computer.id) }
+            if computer.provider == "railway" || computer.provider == "remote" {
+                Button("Share device…") { model.sheet = .shareDevice(computer.id) }
+            }
             Divider()
             if let removeBlocked {
                 Button("Remove device (\(removeBlocked))") {}.disabled(true)

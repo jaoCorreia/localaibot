@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { McpClient, McpHands } from "../hands/mcp.ts";
+import { decodeShare, encodeShare } from "./share.ts";
 import { secrets } from "../secrets.ts";
 import { Collection } from "../store.ts";
 import type { Computer, ComputerProvider } from "./types.ts";
@@ -90,8 +91,13 @@ export class RemoteProvider implements ComputerProvider {
     })));
   }
 
-  /** Checks the endpoint answers with the device tools before saving it. */
+  /**
+   * Checks the endpoint answers with the device tools before saving it. Takes
+   * a share code (`options.code`) or the URL, token and screen password.
+   */
   async create(name: string, options: Record<string, string> = {}) {
+    const shared = options.code?.trim() ? decodeShare(options.code) : undefined;
+    if (shared) options = { url: shared.url, token: shared.token, vncPassword: shared.vncPassword ?? "" };
     const url = normalizeURL(options.url ?? "");
     const token = options.token?.trim();
     if (!token) throw new Error("Paste the device’s token");
@@ -103,6 +109,13 @@ export class RemoteProvider implements ComputerProvider {
     await secrets.set(tokenAccount(id), token);
     this.devices.upsert({ id, name, url, vncPassword: options.vncPassword?.trim() || undefined });
     return id;
+  }
+
+  async share(id: string) {
+    const d = this.devices.get(id);
+    const token = remote.token(id);
+    if (!d || !token) throw new Error(`Unknown device: ${id}`);
+    return encodeShare({ url: d.url, token, vncPassword: d.vncPassword, name: d.name });
   }
 
   /** Forgets the device; the machine itself is left alone. */

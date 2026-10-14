@@ -397,6 +397,17 @@ final class Brain: ObservableObject {
         }
     }
 
+    /// A code another Local Bot pastes to connect to this device; nil on error (in `lastError`).
+    func shareDevice(_ id: String) async -> String? {
+        do {
+            let raw = try await call("computers.share", ["id": id])
+            return (raw as? [String: Any])?["code"] as? String
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     func renameDevice(_ id: String, to name: String) async {
         await perform("computers.rename", ["id": id, "name": name])
         await refreshComputers()

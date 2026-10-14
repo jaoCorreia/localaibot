@@ -42,6 +42,12 @@ struct NewDeviceSheet: View {
                 }
             }
 
+            if kind == "remote" {
+                Label("Get a share code from a device’s “⋯ → Share device…” in another Local Bot, or from the logs of your own server running the device image.",
+                      systemImage: "info.circle")
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
+
             if kind == "railway" {
                 Label("Creates a service in a “Local Bot” project on your Railway account (connected in Settings). The first start takes a few minutes; removing the device deletes the service.",
                       systemImage: "info.circle")
@@ -75,7 +81,26 @@ struct NewDeviceSheet: View {
     }
 
     private func binding(_ id: String) -> Binding<String> {
-        Binding(get: { values[id] ?? "" }, set: { values[id] = $0 })
+        Binding(get: { values[id] ?? "" }, set: { new in
+            values[id] = new
+            // A pasted share code carries the device's name: use it unless one was typed.
+            if id == "code", let shared = sharedName(new),
+               name.isEmpty || kinds.contains(where: { defaultName($0.id) == name }) {
+                name = shared
+            }
+        })
+    }
+
+    /// The name inside a share code (`localbot-device:` + base64url JSON), if any.
+    private func sharedName(_ code: String) -> String? {
+        var body = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard body.hasPrefix("localbot-device:") else { return nil }
+        body = String(body.dropFirst("localbot-device:".count))
+            .replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        body += String(repeating: "=", count: (4 - body.count % 4) % 4)
+        guard let data = Data(base64Encoded: body),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (json["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Required fields (all but the optional ones) still empty.

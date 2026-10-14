@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 const { normalizeURL, RemoteProvider } = await import("../src/computers/remote.ts");
+const { decodeShare, encodeShare } = await import("../src/computers/share.ts");
 
 const TOKEN = "secret-token-1234567890";
 
@@ -55,4 +56,20 @@ test("a connected machine is checked, then driven over MCP", async () => {
 
   await p.remove(id);
   assert.equal((await p.list()).length, 0);
+});
+
+test("share codes round-trip, also inside a link", () => {
+  const d = { url: "https://d.example.com", token: "t0k3n", vncPassword: "pw", name: "Box" };
+  const code = encodeShare(d);
+  assert.match(code, /^localbot-device:[\w-]+$/);
+  assert.deepEqual(decodeShare(` ${code} `), d);
+  assert.deepEqual(decodeShare(`https://localbot.app/connect?d=${code.slice("localbot-device:".length)}`), d);
+  assert.throws(() => decodeShare("nonsense!"), /isn’t a device share code/);
+});
+
+test("a shared device connects from its code alone", async () => {
+  const p = new RemoteProvider();
+  const id = await p.create("Shared", { code: encodeShare({ url, token: TOKEN, vncPassword: "pw" }) });
+  assert.deepEqual(decodeShare(await p.share(id)), { url, token: TOKEN, vncPassword: "pw", name: "Shared" });
+  await p.remove(id);
 });

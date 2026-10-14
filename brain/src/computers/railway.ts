@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { secrets } from "../secrets.ts";
 import { Collection } from "../store.ts";
 import { remote } from "./remote.ts";
+import { encodeShare } from "./share.ts";
 import type { Computer, ComputerProvider, ComputerState } from "./types.ts";
 
 const API = "https://backboard.railway.com/graphql/v2";
@@ -119,6 +120,14 @@ export class RailwayProvider implements ComputerProvider {
       await this.api(`mutation($id: String!) { serviceDelete(id: $id) }`, { id: serviceId }).catch(() => {});
       throw err;
     }
+  }
+
+  /** Others connect to it as a plain remote device; only this account manages it. */
+  async share(id: string) {
+    const d = this.record(id);
+    const token = remote.token(id);
+    if (!token) throw new Error("This device’s token is missing");
+    return encodeShare({ url: d.url, token, vncPassword: d.vncPassword, name: d.name });
   }
 
   /** Deletes the Railway service (and its deployments) and forgets the device. */

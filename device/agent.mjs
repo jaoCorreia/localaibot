@@ -256,4 +256,21 @@ server.on("upgrade", (req, socket, head) => {
   socket.on("error", close);
 });
 
-server.listen(PORT, "0.0.0.0", () => console.log(`localbot agent on :${PORT}`));
+/**
+ * The share code to paste into Local Bot's "Connect a machine", printed when
+ * the public URL is known: LOCALBOT_PUBLIC_URL, or Railway's own domain.
+ * Same format as brain/src/computers/share.ts.
+ */
+function shareCode() {
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  const url = (process.env.LOCALBOT_PUBLIC_URL ?? (domain ? `https://${domain}` : "")).replace(/\/+$/, "");
+  if (!url) return undefined;
+  const payload = { v: 1, url, token: TOKEN, ...(process.env.VNC_PW ? { vnc: process.env.VNC_PW } : {}) };
+  return "localbot-device:" + Buffer.from(JSON.stringify(payload)).toString("base64url");
+}
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`localbot agent on :${PORT}`);
+  const code = shareCode();
+  if (code) console.log(`Share code (grants control of this machine; keep it private):\n${code}`);
+});

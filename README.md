@@ -93,16 +93,21 @@ those MCP tools can be a device, so new machine providers plug in the same way.
   goes to the Keychain) and Local Bot creates a service per device in a
   "Local Bot" project, with its own domain, token and screen password.
   Removing the device deletes the service. Railway bills for the time it runs.
-- **Connect a machine:** run the image anywhere (a VPS, another computer)
-  and add it with its URL and token:
+- **Connect a machine:** paste a device's share code. Get one from
+  "⋯ → Share device…" on a remote or cloud device in another Local Bot, or
+  from the logs of your own server (a VPS, another computer) running the
+  image behind HTTPS:
 
   ```bash
   docker run -d -p 8080:8080 --shm-size=1g \
+    -e LOCALBOT_PUBLIC_URL=https://my-device.example.com \
     -e LOCALBOT_TOKEN=$(openssl rand -hex 24) -e VNC_PW=$(openssl rand -hex 6) \
     ghcr.io/jaocorreia/localbot-device:latest
+  docker logs <container>   # prints the share code
   ```
 
-  Put it behind HTTPS; the app refuses plain `http://` except for localhost.
+  The code carries the URL, token and screen password, so it grants control
+  of the machine: share it only with people you trust.
 
 The image is built and published by `.github/workflows/device-image.yml`.
 Set `LOCALBOT_DEVICE_IMAGE` to make Railway devices run a different image.

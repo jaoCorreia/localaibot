@@ -101,12 +101,10 @@ const methods: Record<string, Handler> = {
         available: railway.configured, reason: railway.configured ? null : "Connect Railway in Settings",
       },
       {
-        id: "remote", label: "Connect a machine", detail: "Any host running the Local Bot device agent, or an MCP server with screenshot, computer and shell tools.",
+        id: "remote", label: "Connect a machine", detail: "Paste the share code of a device someone shared, or of your own server running the device image.",
         available: true, reason: null,
         fields: [
-          { id: "url", label: "URL", placeholder: "https://my-device.example.com", secure: false },
-          { id: "token", label: "Token", placeholder: "LOCALBOT_TOKEN of the device", secure: true },
-          { id: "vncPassword", label: "Screen password (optional)", placeholder: "VNC_PW of the device", secure: true },
+          { id: "code", label: "Share code", placeholder: "localbot-device:…", secure: true },
         ],
       },
       { id: "ios-simulator", label: "iOS Simulator", detail: "Drive iPhone and iPad apps.", available: false, reason: "Coming soon" },
@@ -120,6 +118,12 @@ const methods: Record<string, Handler> = {
     const id = await p.create(String(name).trim(), options ?? {});
     emit("computers", null);
     return { id };
+  },
+  /** A string another Local Bot pastes into "Connect a machine". */
+  "computers.share": async ({ id }) => {
+    const p = computerProvider(id);
+    if (!p.share) throw new Error("Only remote and cloud devices can be shared; this one lives on your Mac");
+    return { code: await p.share(id) };
   },
   // Accounts of cloud device providers (Settings → Device providers)
   "deviceProviders.status": () => [railway.account],

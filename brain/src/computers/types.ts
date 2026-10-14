@@ -43,6 +43,8 @@ export interface ComputerProvider {
    */
   create?(name: string, options?: Record<string, string>): Promise<string>;
   remove?(id: string): Promise<void>;
+  /** A share code another Local Bot can paste to connect to this device (see share.ts). */
+  share?(id: string): Promise<string>;
   /** Hands for a running computer, or null when it can't be driven right now. */
   hands?(id: string, session: string): Promise<Hands | null>;
 }
