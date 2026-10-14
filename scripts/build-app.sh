@@ -13,6 +13,10 @@ NODE_VERSION="22.22.3"
 ARCH="arm64"
 APP_NAME="Local Bot"
 BUNDLE_ID="io.github.patrick-mns.localbot"
+REPO="patrick-mns/localbot"
+# Sparkle installs only updates signed with the matching private key (kept in
+# the maintainer's Keychain, never on GitHub; see scripts/publish-release.sh).
+SPARKLE_KEY="$(cat "$ROOT/assets/sparkle-public-key.txt")"
 
 DIST="$ROOT/dist"
 CACHE="$ROOT/.build-cache"
@@ -46,6 +50,8 @@ cp "$CACHE/node-v$NODE_VERSION-darwin-$ARCH/bin/node" "$APP/Contents/Resources/n
 
 echo "==> App bundle"
 cp "$BIN" "$APP/Contents/MacOS/LocalBot"
+mkdir -p "$APP/Contents/Frameworks"
+cp -R "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/"
 cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -64,12 +70,20 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT License</string>
+  <key>SUFeedURL</key><string>https://github.com/$REPO/releases/latest/download/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>$SPARKLE_KEY</string>
+  <key>SUEnableAutomaticChecks</key><true/>
 </dict>
 </plist>
 PLIST
 
 echo "==> Ad-hoc signature"
 # Node keeps its own nodejs.org signature; the app bundle is signed around it.
+# Sparkle's helpers are signed inside out, as its docs ask for ad-hoc builds.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+for item in "$SPARKLE"/Versions/B/XPCServices/*.xpc "$SPARKLE/Versions/B/Autoupdate" "$SPARKLE/Versions/B/Updater.app" "$SPARKLE"; do
+  codesign --force --sign - --timestamp=none --options runtime "$item"
+done
 codesign --force --sign - --entitlements "$ROOT/apps/mac/LocalBot.entitlements" --options runtime \
   --timestamp=none "$APP/Contents/MacOS/LocalBot"
 codesign --force --sign - --timestamp=none "$APP"

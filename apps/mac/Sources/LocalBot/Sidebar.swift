@@ -82,8 +82,8 @@ struct Sidebar: View {
             .fadesUnderTopBar(Theme.sidebar, height: 12)
 
             Spacer(minLength: 0)
-            if let release = updater.available {
-                UpdateBanner(version: release.version) { model.sheet = .update }
+            if let version = updater.available {
+                UpdateBanner(version: version) { updater.checkForUpdates() }
                     .padding(.horizontal, 12).padding(.top, 8)
             }
             HStack {

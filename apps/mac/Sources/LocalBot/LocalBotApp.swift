@@ -17,6 +17,12 @@ struct LocalBotApp: App {
                 .frame(minWidth: 760, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updater.shared.checkForUpdates() }
+                    .disabled(!Updater.shared.enabled)
+            }
+        }
     }
 }
 
@@ -34,7 +40,6 @@ enum Sheet: Identifiable {
     case shareDevice(String)   // device id
     case routine(botID: String, routineID: String?)
     case onboarding
-    case update
 
     var id: String {
         switch self {
@@ -43,7 +48,6 @@ enum Sheet: Identifiable {
         case .shareDevice(let id): return "share-\(id)"
         case .routine(let bot, let routine): return "routine-\(bot)-\(routine ?? "new")"
         case .onboarding: return "onboarding"
-        case .update: return "update"
         case .newBot: return "new"
         case .editBot(let id): return "edit-\(id)"
         case .settings: return "settings"
@@ -54,7 +58,7 @@ enum Sheet: Identifiable {
 @MainActor
 final class AppModel: ObservableObject {
     let brain = Brain()
-    let updater = Updater()
+    let updater = Updater.shared
     @Published var selection: Selection?
     @Published var sheet: Sheet?
     @Published var showSidebar = true
@@ -127,12 +131,7 @@ struct MainView: View {
         .tint(Theme.text)
         .onAppear {
             brain.start()
-            model.updater.start { release in
-                // Don't cover onboarding or another sheet; the sidebar still shows it.
-                guard model.updater.shouldPrompt(release), model.sheet == nil else { return }
-                model.updater.markPrompted(release)
-                model.sheet = .update
-            }
+            model.updater.start()
         }
         .task {
             // First run only: decide after the brain has reported everything, and
@@ -157,7 +156,6 @@ struct MainView: View {
             case .newDevice: NewDeviceSheet(model: model, brain: brain)
             case .addBots(let id): AddBotsSheet(model: model, brain: brain, deviceID: id)
             case .shareDevice(let id): ShareDeviceSheet(brain: brain, deviceID: id)
-            case .update: UpdateSheet(updater: model.updater)
             case .routine(let bot, let routine): RoutineEditor(brain: brain, botID: bot, routineID: routine)
             }
         }

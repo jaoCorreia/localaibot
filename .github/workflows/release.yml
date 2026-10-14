@@ -1,6 +1,8 @@
 name: Release
 
-# Push a tag like v0.1.0 to build the app and attach the DMG to a GitHub Release.
+# Push a tag like v0.1.0 to build the app and attach the DMG to a draft GitHub
+# Release. The maintainer then runs scripts/publish-release.sh on their Mac,
+# which signs it for Sparkle (the key never leaves that Mac) and publishes it.
 on:
   push:
     tags: ["v*"]
@@ -31,4 +33,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" "dist/LocalBot-$(cat VERSION).dmg" \
-            --title "Local Bot ${GITHUB_REF_NAME}" --generate-notes
+            --title "Local Bot ${GITHUB_REF_NAME}" --generate-notes --draft

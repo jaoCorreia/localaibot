@@ -62,6 +62,11 @@ first time ("Apple could not verify…" or "is damaged"). Allow it once, either 
 
 After that it opens normally.
 
+Updates install from inside the app (Local Bot → Check for Updates…, or the
+banner in the sidebar). They come from this repo's releases through
+[Sparkle](https://sparkle-project.org), and the app only installs an update
+signed with the project's key, which is kept off GitHub.
+
 On first launch a setup assistant connects an AI provider (your key goes to the
 macOS Keychain), creates a Linux device and your first bot.
 
@@ -74,6 +79,19 @@ scripts/dev-mac.sh          # run from source
 (cd brain && npm run check) # typecheck + tests
 scripts/build-app.sh        # dist/Local Bot.app and dist/LocalBot-<version>.dmg
 ```
+
+### Releasing
+
+1. Bump `VERSION`, commit, then push a tag: `git tag -a v0.5.0 -m v0.5.0 && git push origin v0.5.0`.
+   CI builds the DMG into a **draft** release.
+2. On the maintainer's Mac (the Sparkle key is in its Keychain):
+   `scripts/publish-release.sh v0.5.0`. It checks the DMG, signs it, uploads
+   `appcast.xml` and publishes the release.
+
+The signing key was made with Sparkle's `generate_keys --account localbot`;
+its public half is `assets/sparkle-public-key.txt`. Back up the private key
+(`generate_keys --account localbot -x key.txt`) somewhere safe: without it,
+installed apps can't be updated anymore.
 
 macOS VM devices (Lume) are experimental and off by default; set
 `LOCALBOT_EXPERIMENTAL_MACOS=1` to try them.
