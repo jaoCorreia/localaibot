@@ -30,6 +30,14 @@ final class Updater: NSObject, ObservableObject, SPUUpdaterDelegate {
         controller?.checkForUpdates(nil)
     }
 
+    /// GitHub redirects the feed to a fresh asset URL on each release, but the
+    /// redirect gets cached and the app keeps reading the previous appcast.
+    /// A unique query makes every check go to GitHub.
+    nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
+        guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else { return nil }
+        return feed + "?t=\(Int(Date().timeIntervalSince1970))"
+    }
+
     nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         let version = item.displayVersionString
         Task { @MainActor in self.available = version }
