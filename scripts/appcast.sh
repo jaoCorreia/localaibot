@@ -13,10 +13,16 @@ SPARKLE_BIN="$ROOT/apps/mac/.build/artifacts/sparkle/Sparkle/bin"
 # Prints: sparkle:edSignature="…" length="…"
 SIGNATURE="$("$SPARKLE_BIN/sign_update" --account localbot "$DMG")"
 
+# Release notes are markdown; GitHub renders them to HTML the same way as on
+# the release page, and Sparkle shows that HTML. Plain text if that fails.
 escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 DESCRIPTION=""
 if [ -n "$NOTES" ] && [ -s "$NOTES" ]; then
-  DESCRIPTION="<description><![CDATA[<pre style=\"white-space: pre-wrap; font: 12px -apple-system\">$(escape < "$NOTES" | sed 's/]]>/]] >/g')</pre>]]></description>"
+  if ! BODY="$(gh api markdown -f mode=gfm -f context=patrick-mns/localbot -F "text=@$NOTES" 2>/dev/null)"; then
+    BODY="<pre style=\"white-space: pre-wrap\">$(escape < "$NOTES")</pre>"
+  fi
+  STYLE='<style>body{font:13px -apple-system,sans-serif;line-height:1.45;margin:0 4px;color:#1d1d1f}a{color:#0a66d8}h1,h2,h3{font-size:14px;margin:.6em 0 .3em}ul{padding-left:18px;margin:.3em 0}@media(prefers-color-scheme:dark){body{color:#e8e8ea}a{color:#5ea2ff}}</style>'
+  DESCRIPTION="<description><![CDATA[$STYLE$(printf '%s' "$BODY" | sed 's/]]>/]] >/g')]]></description>"
 fi
 
 cat <<XML

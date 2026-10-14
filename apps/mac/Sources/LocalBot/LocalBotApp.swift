@@ -3,6 +3,8 @@ import AppKit
 
 @main
 struct LocalBotApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Running as a bare executable (swift run) has no bundle; make it a regular app.
         NSApplication.shared.setActivationPolicy(.regular)
@@ -23,6 +25,18 @@ struct LocalBotApp: App {
                     .disabled(!Updater.shared.enabled)
             }
         }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// AppKit refuses to quit while a sheet (Settings, a bot editor…) is open,
+    /// which also left Sparkle's "Install and Relaunch" waiting forever. Close
+    /// the sheets and quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        for window in sender.windows {
+            while let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        return .terminateNow
     }
 }
 
