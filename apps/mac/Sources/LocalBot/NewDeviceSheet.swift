@@ -142,7 +142,7 @@ struct KindCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Image(systemName: symbol).font(.system(size: 15))
+                    SymbolIcon(name: symbol, size: 15)
                         .frame(width: 32, height: 32)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
                     Spacer()
@@ -176,7 +176,7 @@ struct KindCard: View {
         switch kind.id {
         case "docker": return "terminal"
         case "lume": return "apple.logo"
-        case "railway": return "cloud"
+        case "railway": return "railway"
         case "remote": return "point.3.connected.trianglepath.dotted"
         case "ios-simulator": return "iphone"
         case "android-emulator": return "candybarphone"

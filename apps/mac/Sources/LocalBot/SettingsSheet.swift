@@ -70,7 +70,7 @@ struct SettingsSheet: View {
 
             SidebarGroup("Device Providers") {
                 ForEach(brain.deviceAccounts) { a in
-                    SidebarItem(icon: "cloud", title: a.label,
+                    SidebarItem(icon: a.id == "railway" ? "railway" : "cloud", title: a.label,
                                 dot: a.connected ? Theme.live : Theme.tertiary,
                                 selected: page == .deviceAccount(a.id)) { page = .deviceAccount(a.id) }
                 }
@@ -137,7 +137,7 @@ struct SidebarItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: icon).font(.system(size: 12))
+                iconView
                     .foregroundStyle(selected ? Theme.text : Theme.secondary)
                     .frame(width: 18)
                 Text(title).font(.system(size: 13))
@@ -154,6 +154,8 @@ struct SidebarItem: View {
         .onHover { hovering = $0 }
         .accessibilityLabel(title)
     }
+
+    private var iconView: some View { SymbolIcon(name: icon, size: 12) }
 }
 
 struct PageHeader: View {
@@ -165,7 +167,7 @@ struct PageHeader: View {
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             if let icon {
-                Image(systemName: icon).font(.system(size: 18))
+                SymbolIcon(name: icon, size: 18)
                     .frame(width: 44, height: 44)
                     .background(RoundedRectangle(cornerRadius: 11).fill(Theme.surface))
                     .hairline(11)
@@ -677,7 +679,7 @@ struct DeviceAccountPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: account.label, subtitle: account.detail, icon: "cloud",
+            PageHeader(title: account.label, subtitle: account.detail, icon: account.id == "railway" ? "railway" : "cloud",
                        badge: account.connected ? ("Connected", Theme.live) : ("Not connected", Theme.tertiary))
 
             Card(title: "Connection") {
