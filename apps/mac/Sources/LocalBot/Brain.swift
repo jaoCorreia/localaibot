@@ -29,6 +29,24 @@ final class Brain: ObservableObject {
             default: return os
             }
         }
+
+        /// Where it runs, so cloud and remote machines read differently from local ones.
+        var symbol: String {
+            switch provider {
+            case "railway": return "cloud"
+            case "remote": return "point.3.connected.trianglepath.dotted"
+            default: return os == "macos" ? "apple.logo" : "terminal"
+            }
+        }
+
+        /// "Cloud" / "Remote" for machines off this Mac, nil for local ones.
+        var placeLabel: String? {
+            switch provider {
+            case "railway": return "Cloud"
+            case "remote": return "Remote"
+            default: return nil
+            }
+        }
     }
 
     struct Access: Decodable, Hashable {
@@ -336,6 +354,49 @@ final class Brain: ObservableObject {
         let detail: String
         let available: Bool
         let reason: String?
+        /// Extra inputs this kind needs to create a device (URL, token…).
+        let fields: [KindField]?
+    }
+
+    struct KindField: Decodable, Identifiable, Hashable {
+        let id: String
+        let label: String
+        let placeholder: String
+        let secure: Bool
+    }
+
+    /// A cloud account devices are created on (Railway…), managed in Settings.
+    struct DeviceAccount: Decodable, Identifiable, Hashable {
+        let id: String
+        let label: String
+        let detail: String
+        let tokenLabel: String
+        let tokenURL: String?
+        let connected: Bool
+        let tokenHint: String?
+        let devices: Int
+    }
+
+    @Published private(set) var deviceAccounts: [DeviceAccount] = []
+
+    func refreshDeviceAccounts() async {
+        if let list: [DeviceAccount] = try? await request("deviceProviders.status") { deviceAccounts = list }
+    }
+
+    /// Returns an error message, or nil when the token was accepted.
+    func connectDeviceAccount(_ id: String, token: String) async -> String? {
+        do {
+            deviceAccounts = try await request("deviceProviders.connect", ["id": id, "token": token])
+            await refreshComputers()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func disconnectDeviceAccount(_ id: String) async {
+        if let list: [DeviceAccount] = try? await request("deviceProviders.disconnect", ["id": id]) { deviceAccounts = list }
+        await refreshComputers()
     }
 
     func deviceKinds() async -> [DeviceKind] {
@@ -343,11 +404,22 @@ final class Brain: ObservableObject {
     }
 
     /// Returns the new device id, or nil (error in `lastError`).
-    func createDevice(kind: String, name: String) async -> String? {
+    func createDevice(kind: String, name: String, options: [String: String] = [:]) async -> String? {
         do {
-            let raw = try await call("computers.create", ["kind": kind, "name": name])
+            let raw = try await call("computers.create", ["kind": kind, "name": name, "options": options])
             await refreshComputers()
             return (raw as? [String: Any])?["id"] as? String
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// A code another Local Bot pastes to connect to this device; nil on error (in `lastError`).
+    func shareDevice(_ id: String) async -> String? {
+        do {
+            let raw = try await call("computers.share", ["id": id])
+            return (raw as? [String: Any])?["code"] as? String
         } catch {
             lastError = error.localizedDescription
             return nil

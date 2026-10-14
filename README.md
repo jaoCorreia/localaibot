@@ -29,6 +29,7 @@ watching (and taking over) live. No cloud: you are the cloud.
 ```
 brain/      TypeScript, cross-platform: bots, chat, agent loop, devices, providers
 apps/mac/   Swift shell for macOS: window, device screen, native VM display
+device/     Image for remote devices: the Linux desktop plus an MCP agent
 scripts/    dev helpers
 ```
 
@@ -79,6 +80,37 @@ macOS VM devices (Lume) are experimental and off by default; set
 
 Local state (bots, chats, memory, routines) lives in `~/.local-bot`; API keys
 live in the macOS Keychain. Logs: `~/Library/Logs/LocalBot/brain.log`.
+
+## Remote and cloud devices
+
+Devices can also live off your Mac. The image in `device/` is the same Linux
+desktop plus a small agent on one HTTP port, guarded by `LOCALBOT_TOKEN`:
+`POST /mcp` serves the hands over MCP (`describe`, `screenshot`, `computer`,
+`shell`) and every other path serves the screen (noVNC). Anything that speaks
+those MCP tools can be a device, so new machine providers plug in the same way.
+
+- **Linux in the cloud (Railway):** connect a Railway account token in Settings → Device Providers (it
+  goes to the Keychain) and Local Bot creates a service per device in a
+  "Local Bot" project, with its own domain, token and screen password.
+  Removing the device deletes the service. Railway bills for the time it runs.
+- **Connect a machine:** paste a device's share code. Get one from
+  "⋯ → Share device…" on a remote or cloud device in another Local Bot, or
+  from the logs of your own server (a VPS, another computer) running the
+  image behind HTTPS:
+
+  ```bash
+  docker run -d -p 8080:8080 --shm-size=1g \
+    -e LOCALBOT_PUBLIC_URL=https://my-device.example.com \
+    -e LOCALBOT_TOKEN=$(openssl rand -hex 24) -e VNC_PW=$(openssl rand -hex 6) \
+    ghcr.io/jaocorreia/localbot-device:latest
+  docker logs <container>   # prints the share code
+  ```
+
+  The code carries the URL, token and screen password, so it grants control
+  of the machine: share it only with people you trust.
+
+The image is built and published by `.github/workflows/device-image.yml`.
+Set `LOCALBOT_DEVICE_IMAGE` to make Railway devices run a different image.
 
 ## License
 

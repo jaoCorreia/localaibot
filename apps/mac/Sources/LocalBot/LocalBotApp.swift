@@ -31,6 +31,7 @@ enum Sheet: Identifiable {
     case settings
     case newDevice
     case addBots(String)   // device id
+    case shareDevice(String)   // device id
     case routine(botID: String, routineID: String?)
     case onboarding
 
@@ -38,6 +39,7 @@ enum Sheet: Identifiable {
         switch self {
         case .newDevice: return "new-device"
         case .addBots(let id): return "add-bots-\(id)"
+        case .shareDevice(let id): return "share-\(id)"
         case .routine(let bot, let routine): return "routine-\(bot)-\(routine ?? "new")"
         case .onboarding: return "onboarding"
         case .newBot: return "new"
@@ -143,6 +145,7 @@ struct MainView: View {
             case .onboarding: OnboardingView(model: model, brain: brain)
             case .newDevice: NewDeviceSheet(model: model, brain: brain)
             case .addBots(let id): AddBotsSheet(model: model, brain: brain, deviceID: id)
+            case .shareDevice(let id): ShareDeviceSheet(brain: brain, deviceID: id)
             case .routine(let bot, let routine): RoutineEditor(brain: brain, botID: bot, routineID: routine)
             }
         }

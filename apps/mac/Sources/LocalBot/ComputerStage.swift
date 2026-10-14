@@ -65,7 +65,12 @@ struct StageHeader<Actions: View>: View {
                 }
             }
             Spacer(minLength: 8)
-            HStack(spacing: 6) { actions }
+            // Full buttons when they fit; icons only when the column is narrow.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) { actions }
+                HStack(spacing: 6) { actions }.environment(\.compactPills, true)
+            }
+            .layoutPriority(1)
             if !model.showChat { PanelToggle(side: .trailing) }
         }
         .padding(.leading, model.showSidebar ? 16 : sidebarToggleInset)
@@ -305,6 +310,9 @@ struct DeviceMenu: View {
         Menu {
             Button("Rename") { model.rename(computer) }
             Button("Add bots") { model.sheet = .addBots(computer.id) }
+            if computer.provider == "railway" || computer.provider == "remote" {
+                Button("Share device…") { model.sheet = .shareDevice(computer.id) }
+            }
             Divider()
             if let removeBlocked {
                 Button("Remove device (\(removeBlocked))") {}.disabled(true)

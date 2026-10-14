@@ -14,6 +14,7 @@ struct SettingsSheet: View {
         case defaults
         case addProvider
         case provider(String)
+        case deviceAccount(String)
     }
 
     @State private var page: Page = .appearance
@@ -41,6 +42,7 @@ struct SettingsSheet: View {
         .onAppear {
             if status?.providers.isEmpty == true { page = .addProvider }
         }
+        .task { await brain.refreshDeviceAccounts() }
     }
 
     // MARK: Sidebar
@@ -65,6 +67,14 @@ struct SettingsSheet: View {
                 }
                 SidebarItem(icon: "plus", title: "Add provider", muted: true, selected: page == .addProvider) { page = .addProvider }
             }
+
+            SidebarGroup("Device Providers") {
+                ForEach(brain.deviceAccounts) { a in
+                    SidebarItem(icon: "cloud", title: a.label,
+                                dot: a.connected ? Theme.live : Theme.tertiary,
+                                selected: page == .deviceAccount(a.id)) { page = .deviceAccount(a.id) }
+                }
+            }
             Spacer()
         }
         .padding(.horizontal, 8)
@@ -86,6 +96,10 @@ struct SettingsSheet: View {
             if let entry = status?.entry(id) {
                 ProviderPage(brain: brain, preset: status?.preset(entry.preset), entry: entry) { page = .addProvider }
                     .id(id)
+            }
+        case .deviceAccount(let id):
+            if let account = brain.deviceAccounts.first(where: { $0.id == id }) {
+                DeviceAccountPage(brain: brain, account: account).id(id)
             }
         }
     }
@@ -646,6 +660,82 @@ struct ProviderPage: View {
             key = ""
             saving = false
             runTest()
+        }
+    }
+}
+
+/// A cloud account devices are created on: connect it with a token, or forget it.
+struct DeviceAccountPage: View {
+    @ObservedObject var brain: Brain
+    let account: Brain.DeviceAccount
+
+    @State private var token = ""
+    @State private var replacing = false
+    @State private var saving = false
+    @State private var error: String?
+    @State private var confirmDisconnect = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageHeader(title: account.label, subtitle: account.detail, icon: "cloud",
+                       badge: account.connected ? ("Connected", Theme.live) : ("Not connected", Theme.tertiary))
+
+            Card(title: "Connection") {
+                SettingRow(label: account.tokenLabel, detail: error ?? "Stored securely in your Mac’s Keychain") {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if let hint = account.tokenHint, !replacing {
+                            HStack(spacing: 8) {
+                                SavedKeyPill(saved: SavedKey(hint: hint, source: "keychain"))
+                                PillButton(title: "Replace", systemImage: "arrow.triangle.2.circlepath") { replacing = true }
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                InlineField(text: $token, placeholder: "Paste your \(account.label) token", secure: true, width: 200)
+                                PillButton(title: saving ? "Checking…" : "Connect", systemImage: "checkmark", prominent: true) { connect() }
+                                    .fixedSize()
+                                    .disabled(saving || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                                if account.connected {
+                                    IconButton(systemImage: "xmark", help: "Keep the current token") { token = ""; replacing = false; error = nil }
+                                }
+                            }
+                        }
+                        if let url = account.tokenURL.flatMap(URL.init(string:)) {
+                            Link(destination: url) {
+                                Label("Get a token", systemImage: "arrow.up.right").font(.system(size: 11))
+                            }
+                            .foregroundStyle(Theme.secondary)
+                        }
+                    }
+                }
+            }
+
+            if account.connected {
+                Card(title: "Status") {
+                    SettingRow(label: "Devices", detail: "Add more from the sidebar’s “Add device”.") {
+                        Text("\(account.devices)").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.secondary)
+                    }
+                }
+                Card {
+                    SettingRow(label: "Disconnect", detail: "Forgets the token. Devices stay on \(account.label) and come back when you connect again.") {
+                        DestructiveButton(title: "Disconnect") { confirmDisconnect = true }
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Disconnect \(account.label)?", isPresented: $confirmDisconnect) {
+            Button("Disconnect", role: .destructive) { Task { await brain.disconnectDeviceAccount(account.id) } }
+        } message: {
+            Text("Its devices are hidden until you connect again. Nothing is deleted on \(account.label).")
+        }
+    }
+
+    private func connect() {
+        saving = true
+        error = nil
+        Task {
+            error = await brain.connectDeviceAccount(account.id, token: token.trimmingCharacters(in: .whitespaces))
+            if error == nil { token = ""; replacing = false }
+            saving = false
         }
     }
 }

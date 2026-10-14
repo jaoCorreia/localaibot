@@ -52,7 +52,7 @@ struct Sidebar: View {
                     section("Devices", action: ("plus", "Add device", { model.sheet = .newDevice })) {
                         ForEach(brain.computers) { computer in
                             Row(selected: model.selection == .computer(computer.id)) {
-                                Image(systemName: computer.os == "macos" ? "apple.logo" : "terminal")
+                                Image(systemName: computer.symbol)
                                     .font(.system(size: 11)).foregroundStyle(Theme.secondary)
                                     .frame(width: 28, height: 28)
                                     .background(RoundedRectangle(cornerRadius: 7).fill(Theme.surface))
@@ -101,7 +101,7 @@ struct Sidebar: View {
 
     private func subtitle(_ c: Brain.Computer) -> String {
         let bots = c.bots.count
-        return "\(c.osLabel) · \(stateLabel(c.state))" + (bots > 0 ? " · \(bots) bot\(bots == 1 ? "" : "s")" : "")
+        return [c.osLabel, c.placeLabel, stateLabel(c.state)].compactMap { $0 }.joined(separator: " · ") + (bots > 0 ? " · \(bots) bot\(bots == 1 ? "" : "s")" : "")
     }
 
     @ViewBuilder
