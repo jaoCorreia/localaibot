@@ -77,6 +77,12 @@ export class Bots {
     return this.view(this.bots.upsert({ ...this.get(id), avatarSeed: randomAvatar() }));
   }
 
+  /** Factory reset: no bots, no access grants. */
+  reset() {
+    this.bots.remove(() => true);
+    this.accesses.remove(() => true);
+  }
+
   delete(id: string) {
     this.bots.remove((b) => b.id === id);
     this.accesses.remove((a) => a.botId === id);

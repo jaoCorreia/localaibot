@@ -147,6 +147,11 @@ export class MemoryStore {
     this.db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
   }
 
+  /** Factory reset: every memory and chat summary. */
+  reset() {
+    this.db.exec(`DELETE FROM memories; DELETE FROM chat_summaries; INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');`);
+  }
+
   deleteForBot(botId: string) {
     this.db.prepare(`DELETE FROM memories WHERE bot_id = ?`).run(botId);
     this.db.prepare(`DELETE FROM chat_summaries WHERE bot_id = ?`).run(botId);

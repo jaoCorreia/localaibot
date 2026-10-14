@@ -66,3 +66,13 @@ test("consolidation: adds learned facts, records the episode, ignores same-turn 
   assert.ok(all.some((m) => m.kind === "episode" && m.text === "Compared plans for the client"));
   assert.ok(all.some((m) => m.kind === "fact" && m.source === "learned"));
 });
+
+test("store: reset erases everything", () => {
+  const s = new MemoryStore(":memory:");
+  s.add({ botId: "b1", kind: "fact", text: "Algo para esquecer", source: "bot" });
+  s.setChatSummary("b1", "resumo", new Date().toISOString());
+  s.reset();
+  assert.equal(s.list("b1", true).length, 0);
+  assert.equal(s.search("b1", "esquecer").length, 0);
+  assert.equal(s.chatSummary("b1"), undefined);
+});

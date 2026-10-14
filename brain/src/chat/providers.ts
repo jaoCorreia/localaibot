@@ -239,6 +239,13 @@ export async function removeProvider(id: string) {
   });
 }
 
+/** Factory reset: forgets every provider and deletes their keys from the Keychain. */
+export async function resetProviders() {
+  for (const c of settings.value.providers) await secrets.delete(account(c.id));
+  clients.clear();
+  settings.update({ providers: [], defaultProvider: "openrouter", defaultModel: "anthropic/claude-haiku-5.5" });
+}
+
 export function setDefault(providerId: string, model: string) {
   config(providerId);
   if (!model.trim()) throw new Error("Empty model");

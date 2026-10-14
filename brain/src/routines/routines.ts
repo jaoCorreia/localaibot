@@ -110,6 +110,11 @@ export class Routines {
     this.changed();
   }
 
+  reset() {
+    this.items.remove(() => true);
+    this.changed();
+  }
+
   deleteForBot(botId: string) {
     this.items.remove((r) => r.botId === botId);
     this.changed();

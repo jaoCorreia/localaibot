@@ -467,6 +467,26 @@ final class Brain: ObservableObject {
         try? await request("bots.previewAvatar", ["seed": seed])
     }
 
+    // MARK: Reset
+
+    /// Back to a fresh install (see brain `app.reset`). Returns false on failure.
+    func resetApp(removeDevices: Bool) async -> Bool {
+        do {
+            _ = try await call("app.reset", ["removeDevices": removeDevices])
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+        messages = [:]
+        memories = [:]
+        models = [:]
+        await refreshBots()
+        await refreshProviders()
+        await refreshRoutines()
+        await refreshComputers()
+        return true
+    }
+
     // MARK: Memory
 
     struct Memory: Decodable, Identifiable, Hashable {

@@ -12,7 +12,7 @@ writeFileSync(join(HOME, "config.json"), JSON.stringify({
 }));
 writeFileSync(join(HOME, ".env"), "OPENROUTER_API_KEY=sk-or-test-9876\n");
 
-const { addProvider, initProviders, providerStatus, removeProvider, updateProvider } = await import("../src/chat/providers.ts");
+const { addProvider, initProviders, providerStatus, removeProvider, resetProviders, updateProvider } = await import("../src/chat/providers.ts");
 
 test("legacy keys move out of config.json and .env", async () => {
   await initProviders();
@@ -41,4 +41,11 @@ test("add / replace / remove keys, never exposing them", async () => {
 test("local providers need no key", async () => {
   const id = await addProvider({ preset: "ollama" });
   assert.equal(providerStatus().providers.find((p) => p.id === id)!.configured, true);
+});
+
+test("reset forgets every provider and its key", async () => {
+  await addProvider({ preset: "openai", apiKey: "openai-secret-4242" });
+  await resetProviders();
+  assert.equal(providerStatus().providers.length, 0);
+  assert.ok(!readFileSync(join(HOME, "secrets.json"), "utf8").includes("openai-secret-4242"));
 });

@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { avatarOptions, avatarSVG, randomAvatar } from "./bots/avatar.ts";
 import { Bots } from "./bots/bots.ts";
 import { Conversations } from "./chat/conversations.ts";
-import { addProvider, initProviders, provider, providerStatus, removeProvider, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
+import { addProvider, initProviders, provider, providerStatus, removeProvider, resetProviders, setDefault, settings, testProvider, updateProvider } from "./chat/providers.ts";
 import { DockerProvider } from "./computers/docker.ts";
 import { LumeProvider } from "./computers/lume.ts";
 import { Routines } from "./routines/routines.ts";
@@ -240,6 +240,29 @@ const methods: Record<string, Handler> = {
     setDefault(id, model);
     emit("providers", null);
     return providerStatus();
+  },
+
+  /**
+   * Back to a fresh install: bots, chats, memory, routines, providers and their
+   * Keychain keys. Linux devices (containers) are removed only if asked.
+   */
+  "app.reset": async ({ removeDevices }) => {
+    conversations.reset();
+    routines.reset();
+    memory.store.reset();
+    bots.reset();
+    await resetProviders();
+    deviceNames.remove(() => true);
+    if (removeDevices) {
+      for (const p of computerProviders) {
+        if (!p.remove || !(await p.available())) continue;
+        for (const c of await p.list()) await p.remove(c.id).catch((err) => log("couldn’t remove", c.id, err?.message));
+      }
+    }
+    emit("bots", null);
+    emit("computers", null);
+    emit("providers", null);
+    emit("routines", null);
   },
 
   ping: () => "pong",

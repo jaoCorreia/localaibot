@@ -85,6 +85,12 @@ export class Conversations {
     return this.running.has(botId);
   }
 
+  /** Factory reset: stops everything and drops every chat. */
+  reset() {
+    for (const [, run] of this.running) run.abort();
+    this.messages.remove(() => true);
+  }
+
   clear(botId: string) {
     this.stop(botId);
     this.messages.remove((m) => m.botId === botId);

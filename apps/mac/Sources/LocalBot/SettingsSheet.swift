@@ -9,6 +9,7 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     enum Page: Hashable {
+        case reset
         case appearance
         case defaults
         case addProvider
@@ -53,6 +54,7 @@ struct SettingsSheet: View {
                 SidebarItem(icon: "circle.lefthalf.filled", title: "Appearance", selected: page == .appearance) { page = .appearance }
                 SidebarItem(icon: "sparkles", title: "Default model", selected: page == .defaults) { page = .defaults }
                 SidebarItem(icon: "wand.and.stars", title: "Setup assistant", muted: true, selected: false) { onRunSetup() }
+                SidebarItem(icon: "arrow.counterclockwise", title: "Reset", selected: page == .reset) { page = .reset }
             }
 
             SidebarGroup("AI Providers") {
@@ -72,6 +74,8 @@ struct SettingsSheet: View {
 
     @ViewBuilder private var detail: some View {
         switch page {
+        case .reset:
+            ResetPage(brain: brain, onReset: onRunSetup)
         case .appearance:
             AppearancePage()
         case .defaults:
@@ -333,6 +337,54 @@ struct MiniWindow: View {
             .padding(8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(bg)
+        }
+    }
+}
+
+/// Factory reset, then the setup assistant: the first-run experience again.
+struct ResetPage: View {
+    @ObservedObject var brain: Brain
+    let onReset: () -> Void
+    @State private var removeDevices = false
+    @State private var confirming = false
+    @State private var working = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageHeader(title: "Reset", subtitle: "Start over as if Local Bot was just installed, then run the setup assistant.")
+            Card(title: "What gets erased") {
+                SettingRow(label: "Bots, chats and memory", detail: "Every bot, its conversations, routines and what it remembers.") {
+                    Image(systemName: "trash").foregroundStyle(Theme.tertiary)
+                }
+                SettingRow(label: "AI providers", detail: "Providers and their API keys, removed from the Keychain.") {
+                    Image(systemName: "key").foregroundStyle(Theme.tertiary)
+                }
+                SettingRow(label: "Also remove Linux devices",
+                           detail: "Deletes the Docker containers and everything on them. Off: devices stay and show up again.") {
+                    Toggle("", isOn: $removeDevices).toggleStyle(.switch).labelsHidden()
+                }
+            }
+            HStack {
+                Spacer()
+                DestructiveButton(title: working ? "Resetting…" : "Reset Local Bot") { confirming = true }
+                    .disabled(working)
+            }
+        }
+        .confirmationDialog("Reset Local Bot?", isPresented: $confirming) {
+            Button(removeDevices ? "Erase everything, including devices" : "Erase everything", role: .destructive) { reset() }
+        } message: {
+            Text("This can’t be undone. Bots, chats, memory, routines, AI providers and their keys are deleted\(removeDevices ? ", and Linux devices are removed" : "").")
+        }
+    }
+
+    private func reset() {
+        working = true
+        Task {
+            if await brain.resetApp(removeDevices: removeDevices) {
+                UserDefaults.standard.set(false, forKey: "onboardingDone")
+                onReset()
+            }
+            working = false
         }
     }
 }
