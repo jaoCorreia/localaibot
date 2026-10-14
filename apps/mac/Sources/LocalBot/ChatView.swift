@@ -47,6 +47,11 @@ struct ChatView: View {
                 Text(bot.model).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
             }
             Spacer()
+            if thinking {
+                PillButton(title: "Stop", systemImage: "stop.fill") { stop() }
+                    .help("Stop the current task")
+                    .keyboardShortcut(.cancelAction)
+            }
             BotMenu(bot: bot)
             PanelToggle(side: .trailing)
         }
@@ -119,6 +124,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend && !thinking)
                 .accessibilityLabel(thinking ? "Stop" : "Send")
+                .help(thinking ? "Stop the current task" : "Send message")
             }
             .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 18).fill(Theme.surface))

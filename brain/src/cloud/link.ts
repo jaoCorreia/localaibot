@@ -1,3 +1,5 @@
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { secrets } from "../secrets.ts";
 import { Collection } from "../store.ts";
 
@@ -141,17 +143,13 @@ export class CloudLink {
       let delay = 1000;
       while (!ctrl.signal.aborted && this.connected) {
         try {
-          const res = await fetch(`${this.url}/events`, {
-            headers: { authorization: `Bearer ${secrets.get(TOKEN_ACCOUNT)}` },
-            signal: ctrl.signal,
-          });
-          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+          const res = await eventStream(`${this.url}/events`, secrets.get(TOKEN_ACCOUNT)!, ctrl.signal);
           delay = 1000;
           // Anything may have changed while we weren't listening.
           this.relay("bots", null);
           let buffer = "";
-          for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-            buffer += Buffer.from(chunk).toString("utf8");
+          for await (const chunk of res) {
+            buffer += chunk;
             let end: number;
             while ((end = buffer.indexOf("\n\n")) >= 0) {
               const block = buffer.slice(0, end);
@@ -173,6 +171,28 @@ export class CloudLink {
       }
     })();
   }
+}
+
+/** A dedicated socket keeps the long-lived stream out of the RPC fetch pool. */
+function eventStream(url: string, token: string, signal: AbortSignal): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const request = url.startsWith("https:") ? httpsRequest : httpRequest;
+    const req = request(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal,
+      agent: false,
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode}`));
+        return;
+      }
+      res.setEncoding("utf8");
+      resolve(res);
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 async function call(url: string, token: string, method: string, params: unknown) {
