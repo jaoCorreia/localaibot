@@ -96,6 +96,28 @@ export const SHARE_FILE_TOOL: ToolSpec = {
   },
 };
 
+/**
+ * Asks the user to connect an app (Settings → Connectors) when a task needs
+ * it and the bot doesn't have it. The chat shows a Connect card; the bot is
+ * told to continue once it's connected. `ids` are the connectors it may ask for.
+ */
+export function suggestConnectionTool(ids: string[]): ToolSpec {
+  return {
+    name: "suggest_connection",
+    description:
+      "Asks the user to connect one of their apps so you can use it. Use it when the task needs that app and you don't have its tools. " +
+      "Then stop and say briefly that you'll continue once it's connected; you'll be told when it is.",
+    parameters: {
+      type: "object",
+      properties: {
+        connector: { type: "string", enum: ids },
+        reason: { type: "string", description: "One short sentence: what you need it for" },
+      },
+      required: ["connector"],
+    },
+  };
+}
+
 /** Delegation between bots; offered whenever the bot has teammates. */
 export const ASK_BOT_TOOL: ToolSpec = {
   name: "ask_bot",

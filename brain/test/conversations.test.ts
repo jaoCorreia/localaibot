@@ -215,3 +215,37 @@ test("a bot uses tools from the MCP servers it has on", async () => {
   assert.ok(conv.history(id.a).some((m) => m.role === "activity" && m.text === "Used Echo: echo"));
   await mcp.remove(server.id);
 });
+
+test("a bot asks to connect an app; once connected it continues on its own", async () => {
+  const { McpServers } = await import("../src/mcp/servers.ts");
+  const mcp = new McpServers();
+  const { conv, fakes, bots, id } = setup({
+    a: [
+      { tools: [{ name: "suggest_connection", args: { connector: "notion", reason: "To save the notes" } }] },
+      { text: "Conecta o Notion e eu continuo." },
+      { text: "Salvei no Notion." },
+    ],
+  });
+  conv.attachMcp(mcp);
+  await conv.send(bots[0], "salva isso no Notion");
+  await settle(conv, bots);
+
+  // The bot was offered the catalog, and posted a Connect card.
+  const offered = fakes.a.requests[0].tools?.find((t) => t.name === "suggest_connection");
+  assert.ok((offered?.parameters as any).properties.connector.enum.includes("notion"));
+  const card = conv.history(id.a).find((m) => m.connect)!;
+  assert.deepEqual({ ...card.connect }, { connector: "notion", name: "Notion", description: "Search, read and write pages", mode: "connect", reason: "To save the notes", state: "pending" });
+
+  // Signed in: the card flips and the bot picks the task back up.
+  conv.connectorReady("notion");
+  await settle(conv, bots);
+  const after = conv.history(id.a);
+  assert.equal(after.find((m) => m.id === card.id)?.connect?.state, "connected");
+  const notice = after.find((m) => m.notice);
+  assert.match(notice!.text, /Notion is connected/);
+  assert.equal(after.at(-1)?.text, "Salvei no Notion.");
+  // It saw its earlier ask and the notice in the history.
+  const last = fakes.a.requests.at(-1)!.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+  assert.match(last, /Asked the user to connect Notion: connected/);
+  assert.match(last, /\[Local Bot\] Notion is connected now/);
+});

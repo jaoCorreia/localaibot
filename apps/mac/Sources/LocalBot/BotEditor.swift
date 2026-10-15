@@ -49,8 +49,8 @@ struct BotEditor: View {
             }
             .padding(.bottom, 22)
 
-            // The fields scroll when they don't fit (many MCP servers); the
-            // header and the buttons stay put.
+            // The fields scroll when they don't fit; the header and the
+            // buttons stay put.
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     Field(label: "Name", text: $draft.name, placeholder: "e.g. Sales, Researcher, Support")
@@ -59,7 +59,6 @@ struct BotEditor: View {
                           placeholder: "How it should work, tone, rules, what never to do…", axis: .vertical)
                     ProviderModelPicker(brain: brain, provider: $draft.provider, model: $draft.model)
                     ComputerPicker(brain: brain, selection: $draft.computerId)
-                    McpServerToggles(brain: brain, selection: $draft.mcpServers)
                 }
                 .padding(.horizontal, 2).padding(.bottom, 4)
                 .thinScrollers()

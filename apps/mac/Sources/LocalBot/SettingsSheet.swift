@@ -18,6 +18,7 @@ struct SettingsSheet: View {
         case deviceAccount(String)
         case addMcp
         case mcp(String)
+        case connectors
     }
 
     @State private var page: Page = .appearance
@@ -63,6 +64,7 @@ struct SettingsSheet: View {
                 SidebarItem(icon: "circle.lefthalf.filled", title: "Appearance", selected: page == .appearance) { page = .appearance }
                 SidebarItem(icon: "sparkles", title: "Default model", selected: page == .defaults) { page = .defaults }
                 SidebarItem(icon: "moon.zzz", title: "Background", selected: page == .background) { page = .background }
+                SidebarItem(icon: "square.grid.2x2", title: "Connectors", selected: page == .connectors) { page = .connectors }
                 SidebarItem(icon: "wand.and.stars", title: "Setup assistant", muted: true, selected: false) { onRunSetup() }
                 SidebarItem(icon: "arrow.counterclockwise", title: "Reset", selected: page == .reset) { page = .reset }
             }
@@ -77,7 +79,7 @@ struct SettingsSheet: View {
             }
 
             SidebarGroup("MCP Servers") {
-                ForEach(brain.mcpServers) { s in
+                ForEach(brain.mcpServers.filter { $0.connector == nil }) { s in
                     SidebarItem(icon: s.isRemote ? "globe" : "terminal", title: s.name,
                                 dot: s.stateColor, selected: page == .mcp(s.id)) { page = .mcp(s.id) }
                 }
@@ -133,9 +135,11 @@ struct SettingsSheet: View {
             AddProviderPage(brain: brain) { id in page = .provider(id) }
         case .addMcp:
             AddMcpServerPage(brain: brain) { id in page = .mcp(id) }
+        case .connectors:
+            ConnectorsPage(brain: brain) { id in page = .mcp(id) }
         case .mcp(let id):
             if let server = brain.mcpServers.first(where: { $0.id == id }) {
-                McpServerPage(brain: brain, server: server) { page = .addMcp }
+                McpServerPage(brain: brain, server: server) { page = server.connector == nil ? .addMcp : .connectors }
                     .id(server.id)
             }
         case .provider(let id):
