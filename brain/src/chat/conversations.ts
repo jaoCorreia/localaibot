@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { Collection } from "../store.ts";
 import type { Bot } from "../bots/bots.ts";
 import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, SHARE_FILE_TOOL, runTool, suggestConnectionTool } from "../agent/tools.ts";
 import { FileStore, readDeviceFile, type Attachment } from "./files.ts";
 import type { McpServers } from "../mcp/servers.ts";
+import { MessageStore } from "./messages.ts";
 import type { Routines } from "../routines/routines.ts";
 import { MEMORY_TOOLS, VERBATIM_MESSAGES, type MemoryService } from "../memory/memory.ts";
 import type { Hands } from "../hands/types.ts";
@@ -79,7 +79,7 @@ const BUSY_WAIT_MS = 90_000;
 const DELEGATION_TIMEOUT_MS = 10 * 60_000;
 
 export class Conversations {
-  private messages = new Collection<Message>("messages.json");
+  private messages = new MessageStore();
   private running = new Map<string, AbortController>();
 
   private routines?: Routines;
@@ -110,12 +110,17 @@ export class Conversations {
   }
 
   history(botId: string) {
-    return this.messages.where((m) => m.botId === botId);
+    return this.messages.forBot(botId);
+  }
+
+  /** A page of a chat, newest last: the last `limit` before `before` (an id). */
+  page(botId: string, limit = 100, before?: string) {
+    return this.messages.page(botId, Math.max(1, Math.min(limit, 500)), before);
   }
 
   /** Takes a chat moved from another brain. */
   importHistory(botId: string, messages: Message[]) {
-    this.messages.remove((m) => m.botId === botId);
+    this.messages.removeBot(botId);
     for (const m of messages) this.messages.upsert({ ...m, botId });
   }
 
@@ -126,13 +131,13 @@ export class Conversations {
   /** Factory reset: stops everything and drops every chat. */
   reset() {
     for (const [, run] of this.running) run.abort();
-    this.messages.remove(() => true);
+    this.messages.clear();
     this.files.clearAll();
   }
 
   clear(botId: string) {
     this.stop(botId);
-    this.messages.remove((m) => m.botId === botId);
+    this.messages.removeBot(botId);
     this.files.clear(botId);
     // Clearing the chat drops its summary too; long-term memories stay.
     this.memory?.store.clearChatSummary(botId);

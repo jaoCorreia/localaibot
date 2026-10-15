@@ -3,6 +3,8 @@ import AppKit
 import QuickLook
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
+import AVFoundation
+import ImageIO
 
 /// Files a bot shared in the chat. One document gets a preview card, images a
 /// grid, several files a list with "Download all", anything without a preview
@@ -50,8 +52,11 @@ final class SharedFiles {
         let task = Task<URL?, Never> {
             guard let data = await Brain.shared?.fileData(botID: botID, fileID: file.id) else { return nil }
             let url = path(file)
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            return (try? data.write(to: url)) != nil ? url : nil
+            // Written off the main thread so the chat stays smooth.
+            return await Task.detached(priority: .userInitiated) { () -> URL? in
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                return (try? data.write(to: url, options: .atomic)) != nil ? url : nil
+            }.value
         }
         loading[file.id] = task
         let url = await task.value
@@ -156,8 +161,18 @@ private struct CompactCard: View {
     var body: some View {
         let actions = FileActions(file: file, botID: botID, quickLook: $quickLook)
         HStack(spacing: 12) {
-            FileIcon(file: file, size: 18)
-            FileTitle(file: file)
+            if file.isAudio {
+                PlayButton(file: file, botID: botID, size: 36)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(file.name).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
+                    AudioProgress(file: file)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                AudioTimeOrSize(file: file)
+            } else {
+                FileIcon(file: file, size: 18)
+                FileTitle(file: file)
+            }
             IconButton(systemImage: "arrow.down", help: "Download") { actions.download() }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
@@ -181,10 +196,17 @@ private struct FileList: View {
             ForEach(files) { file in
                 let actions = FileActions(file: file, botID: botID, quickLook: $quickLook)
                 HStack(spacing: 10) {
-                    FileIcon(file: file, size: 15, compact: true)
-                    Text(file.name).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
+                    if file.isAudio {
+                        PlayButton(file: file, botID: botID, size: 22)
+                    } else {
+                        FileIcon(file: file, size: 15, compact: true)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(file.name).font(.system(size: 13)).lineLimit(1).truncationMode(.middle)
+                        if file.isAudio { AudioProgress(file: file) }
+                    }
                     Spacer(minLength: 6)
-                    Text(file.sizeText).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                    AudioTimeOrSize(file: file)
                     IconButton(systemImage: "arrow.down", help: "Download") { actions.download() }
                 }
                 .padding(.leading, 12).padding(.trailing, 6).padding(.vertical, 4)
@@ -267,7 +289,9 @@ private struct ImageTile: View {
         .draggableFile(file, botID: botID)
         .help(file.name)
         .task(id: file.id) {
-            if let url = await SharedFiles.shared.local(file, botID: botID) { image = NSImage(contentsOf: url) }
+            if let url = await SharedFiles.shared.local(file, botID: botID) {
+                image = await Thumbnails.downsampled(url, maxPixels: tall ? 1000 : 480)
+            }
         }
     }
 }
@@ -316,6 +340,22 @@ private extension View {
 }
 
 enum Thumbnails {
+    /// A small copy for the chat (a photo can be 4000 px; the tile shows ~240 pt),
+    /// decoded off the main thread.
+    static func downsampled(_ url: URL, maxPixels: Int) async -> NSImage? {
+        await Task.detached(priority: .userInitiated) { () -> NSImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        }.value
+    }
+
     @MainActor
     static func image(for file: Brain.Attachment, botID: String, size: CGSize) async -> NSImage? {
         guard file.size <= prefetchLimit, let url = await SharedFiles.shared.local(file, botID: botID) else { return nil }
@@ -328,6 +368,7 @@ enum Thumbnails {
 extension Brain.Attachment {
     var ext: String { (name as NSString).pathExtension.lowercased() }
     var isImage: Bool { mime.hasPrefix("image/") && mime != "image/svg+xml" }
+    var isAudio: Bool { mime.hasPrefix("audio/") || ["mp3", "wav", "m4a", "aac", "flac", "ogg", "aiff"].contains(ext) }
     /// Types Quick Look draws a page of.
     var hasPreview: Bool { ["pdf", "docx", "doc", "xlsx", "pptx", "key", "pages", "numbers", "txt", "md", "csv", "html", "rtf"].contains(ext) }
 
@@ -351,5 +392,163 @@ extension Brain.Attachment {
         case "json", "js", "ts", "py", "sh", "swift", "html": return ("chevron.left.forwardslash.chevron.right", Theme.secondary)
         default: return ("doc", Theme.secondary)
         }
+    }
+}
+
+
+// MARK: Audio
+
+/// One audio file at a time plays from the chat; this tracks which and where.
+@MainActor
+final class ChatAudio: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    static let shared = ChatAudio()
+    @Published private(set) var current: String?
+    @Published private(set) var playing = false
+    @Published private(set) var loading: String?
+    @Published private(set) var position: TimeInterval = 0
+    @Published private(set) var duration: TimeInterval = 0
+    private var player: AVAudioPlayer?
+    private var timer: Timer?
+
+    func toggle(_ file: Brain.Attachment, botID: String) {
+        if current == file.id, let player {
+            if player.isPlaying { player.pause(); playing = false; stopTimer() }
+            else { player.play(); playing = true; startTimer() }
+            return
+        }
+        stop()
+        loading = file.id
+        Task {
+            defer { if loading == file.id { loading = nil } }
+            guard let url = await SharedFiles.shared.local(file, botID: botID) else { return }
+            // Opening a WAV reads and checks the whole file: do it off the main thread.
+            let made = await Task.detached(priority: .userInitiated) { () -> AVAudioPlayer? in
+                guard let p = try? AVAudioPlayer(contentsOf: url) else { return nil }
+                p.prepareToPlay()
+                return p
+            }.value
+            guard let next = made, loading == file.id || current == nil else { return }
+            next.delegate = self
+            player = next
+            current = file.id
+            duration = next.duration
+            position = 0
+            next.play()
+            playing = true
+            startTimer()
+        }
+    }
+
+    func seek(_ file: Brain.Attachment, to fraction: Double) {
+        guard current == file.id, let player else { return }
+        player.currentTime = max(0, min(1, fraction)) * player.duration
+        position = player.currentTime
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        current = nil
+        playing = false
+        position = 0
+        stopTimer()
+    }
+
+    private func startTimer() {
+        stopTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let p = self.player else { return }
+                self.position = p.currentTime
+            }
+        }
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            self.playing = false
+            self.position = 0
+            self.stopTimer()
+        }
+    }
+
+    static func format(_ t: TimeInterval) -> String {
+        let s = Int(t.rounded(.down))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+private struct PlayButton: View {
+    let file: Brain.Attachment
+    let botID: String
+    var size: CGFloat
+    @ObservedObject private var audio = ChatAudio.shared
+    @State private var hovering = false
+
+    private var isCurrent: Bool { audio.current == file.id }
+
+    var body: some View {
+        Button { audio.toggle(file, botID: botID) } label: {
+            ZStack {
+                Circle().fill(isCurrent || hovering ? Theme.text : Theme.raised)
+                if audio.loading == file.id {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: isCurrent && audio.playing ? "pause.fill" : "play.fill")
+                        .font(.system(size: size * 0.38, weight: .semibold))
+                        .foregroundStyle(isCurrent || hovering ? Theme.onText : Theme.text)
+                        .offset(x: isCurrent && audio.playing ? 0 : size * 0.04)
+                }
+            }
+            .frame(width: size, height: size)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        // Fetch it as soon as it shows up, so the first play starts right away.
+        .task(id: file.id) {
+            if file.size <= prefetchLimit { _ = await SharedFiles.shared.local(file, botID: botID) }
+        }
+        .help(isCurrent && audio.playing ? "Pause" : "Play")
+        .accessibilityLabel(isCurrent && audio.playing ? "Pause \(file.name)" : "Play \(file.name)")
+    }
+}
+
+/// A thin progress bar for the playing file; click to jump.
+private struct AudioProgress: View {
+    let file: Brain.Attachment
+    @ObservedObject private var audio = ChatAudio.shared
+
+    var body: some View {
+        let isCurrent = audio.current == file.id
+        let fraction = isCurrent && audio.duration > 0 ? audio.position / audio.duration : 0
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.raised)
+                Capsule().fill(Theme.text).frame(width: max(0, g.size.width * fraction))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { location in audio.seek(file, to: location.x / max(g.size.width, 1)) }
+        }
+        .frame(height: 3)
+        .opacity(isCurrent ? 1 : 0.6)
+    }
+}
+
+/// Elapsed / total while it's the current file, the size otherwise.
+private struct AudioTimeOrSize: View {
+    let file: Brain.Attachment
+    @ObservedObject private var audio = ChatAudio.shared
+
+    var body: some View {
+        Text(audio.current == file.id
+             ? "\(ChatAudio.format(audio.position)) / \(ChatAudio.format(audio.duration))"
+             : file.sizeText)
+            .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.secondary)
     }
 }
