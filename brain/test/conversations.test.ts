@@ -197,3 +197,21 @@ test("share_file copies files off the device into the chat, downloadable", async
   conv.clear(id.a);
   assert.throws(() => conv.readFile(id.a, shared!.files![0].id));
 });
+
+test("a bot uses tools from the MCP servers it has on", async () => {
+  const { McpServers } = await import("../src/mcp/servers.ts");
+  const { join } = await import("node:path");
+  const mcp = new McpServers();
+  const server = await mcp.add({ name: "Echo", transport: "stdio", command: process.execPath, args: [join(import.meta.dirname, "fixtures/mcp-echo.mjs")] });
+  const { conv, fakes, bots, id } = setup({ a: [{ tools: [{ name: "echo__echo", args: { text: "from the bot" } }] }, { text: "Feito." }] });
+  conv.attachMcp(mcp);
+  bots[0].mcpServers = [server.id];
+  await conv.send(bots[0], "usa o echo");
+  await settle(conv, bots);
+  const offered = fakes.a.requests[0].tools?.map((t) => t.name) ?? [];
+  assert.ok(offered.includes("echo__echo"));
+  const toolMsg = fakes.a.requests[1].messages.find((m) => m.role === "tool");
+  assert.equal(toolMsg?.content, "echo: from the bot ()");
+  assert.ok(conv.history(id.a).some((m) => m.role === "activity" && m.text === "Used Echo: echo"));
+  await mcp.remove(server.id);
+});

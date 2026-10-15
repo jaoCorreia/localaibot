@@ -12,6 +12,7 @@ import { Routines, type Routine, type RunOutcome } from "./routines/routines.ts"
 import { MemoryService } from "./memory/memory.ts";
 import { Collection } from "./store.ts";
 import { CloudLink } from "./cloud/link.ts";
+import { McpServers } from "./mcp/servers.ts";
 import type { ComputerProvider } from "./computers/types.ts";
 
 /**
@@ -148,11 +149,30 @@ const memory = new MemoryService(
   (botId) => emit("memory", { botId }),
 );
 conversations.attachMemory(memory);
+
+/** MCP servers from Settings; their tools go to the bots that enable them. */
+const mcp = new McpServers(() => emit("mcp", null));
+conversations.attachMcp(mcp);
+// Local servers are child processes: stop them with the brain.
+process.on("exit", () => mcp.stopAll());
 // Started once keys are loaded (see `ready` below).
 
 export type Handler = (params: any) => unknown | Promise<unknown>;
 
 export const methods: Record<string, Handler> = {
+  // MCP servers (Settings → MCP Servers)
+  "mcp.list": () => mcp.list(),
+  "mcp.add": (input) => mcp.add(input),
+  "mcp.update": ({ id, ...input }) => mcp.update(String(id), input),
+  "mcp.remove": async ({ id }) => {
+    await mcp.remove(String(id));
+    // Bots stop offering its tools.
+    for (const b of bots.list()) {
+      if (b.mcpServers?.includes(id)) bots.update(b.id, { mcpServers: b.mcpServers.filter((x) => x !== id) });
+    }
+    botsChanged();
+  },
+  "mcp.test": ({ id }) => mcp.test(String(id)),
   /** Which brain the app is talking to (it restarts an outdated service). */
   "app.info": () => ({ version: process.env.LOCALBOT_VERSION ?? "dev", service: presence.service, pid: process.pid }),
   // Computers
@@ -374,6 +394,7 @@ export const methods: Record<string, Handler> = {
     memory.store.reset();
     bots.reset();
     await resetProviders();
+    await mcp.clear();
     deviceNames.remove(() => true);
     if (removeDevices) {
       for (const p of computerProviders) {
@@ -604,7 +625,7 @@ for (const method of ["routines.update", "routines.delete", "routines.runNow"]) 
 }
 
 /** Keys load from the Keychain before the first request is served. */
-export const ready = Promise.all([initProviders(), railway.load(), remoteDevices.load(), cloud.load()])
+export const ready = Promise.all([initProviders(), railway.load(), remoteDevices.load(), cloud.load(), mcp.init()])
   .catch((err) => log("couldn’t load keys:", err instanceof Error ? err.message : err))
   .then(() => routines.start());
 

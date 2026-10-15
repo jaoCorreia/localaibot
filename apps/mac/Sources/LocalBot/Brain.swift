@@ -79,6 +79,8 @@ final class Brain: ObservableObject {
         let avatarSeed: String        // catalog spec ("v1:…") or legacy seed
         let face: Face
         let memoryAuto: Bool?
+        /// MCP servers this bot may use.
+        let mcpServers: [String]?
         /// "cloud" when the bot lives in the cloud brain (keeps working with the app closed).
         let host: String?
         /// Snapshot used to restore execution controls after opening or reconnecting.
@@ -230,6 +232,7 @@ final class Brain: ObservableObject {
     @Published private(set) var thinking: Set<String> = []
     private var botStatusRevision: [String: Int] = [:]
     @Published private(set) var routines: [Routine] = []
+    @Published private(set) var mcpServers: [McpServer] = []
     @Published private(set) var memories: [String: [Memory]] = [:]
     @Published private(set) var providerStatus: ProviderStatus?
     /// Model lists per provider id.
@@ -327,6 +330,7 @@ final class Brain: ObservableObject {
                 await refreshProviders()
                 await refreshRoutines()
                 await refreshCloud()
+                await refreshMcp()
                 loaded = true
                 await checkService()
                 // Computers change outside the app too (docker, lume); poll for state.
@@ -462,6 +466,66 @@ final class Brain: ObservableObject {
     }
 
     /// A code another Local Bot pastes to connect to this device; nil on error (in `lastError`).
+    // MARK: MCP servers
+
+    /// Mirrors brain/src/mcp/servers.ts.
+    struct McpServer: Decodable, Identifiable, Hashable {
+        struct Tool: Decodable, Hashable, Identifiable {
+            let name: String
+            let description: String?
+            var id: String { name }
+        }
+        struct Failure: Decodable, Hashable {
+            let at: String
+            let message: String
+        }
+        let id: String
+        let name: String
+        let transport: String          // http | stdio
+        let url: String?
+        let command: String?
+        let args: [String]?
+        let envKeys: [String]?
+        let enabled: Bool
+        let hasToken: Bool
+        let state: String              // off | idle | connecting | connected | error
+        let tools: [Tool]?
+        let errors: [Failure]
+
+        var isRemote: Bool { transport == "http" }
+        /// The command line as typed, for display.
+        var commandLine: String { ([command ?? ""] + (args ?? [])).joined(separator: " ") }
+    }
+
+    func refreshMcp() async {
+        if let list: [McpServer] = try? await request("mcp.list") { mcpServers = list }
+    }
+
+    /// Adds or updates a server; returns its id, or nil with `lastError` set.
+    func saveMcpServer(id: String?, _ params: [String: Any]) async -> (id: String?, error: String?) {
+        do {
+            var p = params
+            if let id { p["id"] = id }
+            let server: McpServer = try await request(id == nil ? "mcp.add" : "mcp.update", p)
+            await refreshMcp()
+            return (server.id, nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
+    }
+
+    /// Connects and lists the tools; returns an error message on failure.
+    func testMcpServer(_ id: String) async -> String? {
+        defer { Task { await refreshMcp() } }
+        do { _ = try await call("mcp.test", ["id": id]); return nil } catch { return error.localizedDescription }
+    }
+
+    func removeMcpServer(_ id: String) async {
+        await perform("mcp.remove", ["id": id])
+        await refreshMcp()
+        await refreshBots()
+    }
+
     /// Hides the device's own pointer while watching; shows it for Take control.
     func setDevicePointer(_ id: String, hidden: Bool) async {
         // The device screen can show up before the brain is ready.
@@ -522,6 +586,7 @@ final class Brain: ObservableObject {
         var model = ""
         var computerId: String?
         var avatarSeed = UUID().uuidString   // replaced by a catalog spec once the editor loads
+        var mcpServers: [String] = []
     }
 
     func createBot(_ d: BotDraft) async -> Bot? {
@@ -530,6 +595,7 @@ final class Brain: ObservableObject {
         if let c = d.computerId { params["computerId"] = c }
         do {
             let bot: Bot = try await request("bots.create", params)
+            if !d.mcpServers.isEmpty { await perform("bots.update", ["id": bot.id, "mcpServers": d.mcpServers]) }
             await refreshBots()
             return bot
         } catch {
@@ -542,6 +608,7 @@ final class Brain: ObservableObject {
         var patch: [String: Any] = ["id": id, "name": d.name, "role": d.role,
                                     "instructions": d.instructions, "provider": d.provider, "model": d.model]
         if !d.avatarSeed.isEmpty { patch["avatarSeed"] = d.avatarSeed }
+        patch["mcpServers"] = d.mcpServers
         await perform("bots.update", patch)
         let current = bots.first { $0.id == id }?.ownedComputer
         if current != d.computerId {
@@ -912,6 +979,8 @@ final class Brain: ObservableObject {
             Task { await refreshProviders() }
         case "cloud":
             Task { await refreshCloud() }
+        case "mcp":
+            Task { await refreshMcp() }
         case "routine.finished":
             Notifier.shared.routineFinished(data)
         default:
