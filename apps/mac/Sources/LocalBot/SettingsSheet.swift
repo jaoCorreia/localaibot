@@ -508,7 +508,7 @@ struct PresetTile: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: presetSymbol(preset.id)).font(.system(size: 13))
+                SymbolIcon(name: presetSymbol(preset.id), size: 13)
                     .frame(width: 30, height: 30)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Theme.raised))
                 VStack(alignment: .leading, spacing: 1) {

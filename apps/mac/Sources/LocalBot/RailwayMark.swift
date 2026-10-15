@@ -55,8 +55,33 @@ struct SymbolIcon: View {
     var body: some View {
         if name == "railway" {
             RailwayMark().frame(width: size * 1.15, height: size * 1.15)
+        } else if name == "logo.gemini" {
+            GeminiMark().frame(width: size * 1.2, height: size * 1.2)
+        } else if name.hasPrefix("logo."), let logo = ProviderLogos.image(String(name.dropFirst(5))) {
+            Image(nsImage: logo).renderingMode(.template).resizable().scaledToFit()
+                .frame(width: size * 1.2, height: size * 1.2)
         } else {
             Image(systemName: name).font(.system(size: size))
         }
+    }
+}
+
+/// Gemini's four-pointed spark: each side is a shallow arc bowing toward the
+/// center (radius about 64% of the mark, as in the official symbol).
+struct GeminiMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        // Quad control between the center and the corner each side faces.
+        func control(_ cx: CGFloat, _ cy: CGFloat) -> CGPoint {
+            CGPoint(x: c.x + (cx - c.x) * 0.155, y: c.y + (cy - c.y) * 0.155)
+        }
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.midY), control: control(rect.maxX, rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.maxY), control: control(rect.maxX, rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.midY), control: control(rect.minX, rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.minY), control: control(rect.minX, rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
