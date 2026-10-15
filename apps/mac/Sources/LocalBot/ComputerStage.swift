@@ -144,6 +144,8 @@ struct VNCStage: View {
             Screen(highlighted: controlling) {
                 if running, let url = computer.display.url {
                     VNCScreen(url: url, password: computer.display.password, controlling: controlling)
+                        // Watching shows only the bot's cursor; Take control brings the device's back.
+                        .task(id: controlling) { await brain.setDevicePointer(computer.id, hidden: !controlling) }
                 } else {
                     Placeholder(icon: "power", text: busy ? "Starting device…" : "Device is off",
                                 detail: busy ? nil : "Start it to see the screen and let bots work.")
