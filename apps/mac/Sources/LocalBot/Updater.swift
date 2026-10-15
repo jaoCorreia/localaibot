@@ -43,6 +43,11 @@ final class Updater: NSObject, ObservableObject, SPUUpdaterDelegate {
         Task { @MainActor in self.available = version }
     }
 
+    /// The menu bar keeps ⌘Q from quitting; an update must really quit.
+    nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+        Task { @MainActor in MenuBar.quitting = true }
+    }
+
     nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
         Task { @MainActor in self.available = nil }
     }

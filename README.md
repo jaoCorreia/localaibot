@@ -97,6 +97,12 @@ installed apps can't be updated anymore.
 macOS VM devices (Lume) are experimental and off by default; set
 `LOCALBOT_EXPERIMENTAL_MACOS=1` to try them.
 
+**Background:** Settings → Background keeps routines running while Local Bot
+is closed. It installs a LaunchAgent (`~/Library/LaunchAgents/io.github.patrick-mns.localbot.*`)
+that runs the brain as a service; the app then lives in the menu bar, ⌘Q only
+closes the window, and routines notify you when they finish. Turning it off
+removes the agents.
+
 Local state (bots, chats, memory, routines) lives in `~/.local-bot`; API keys
 live in the macOS Keychain. Logs: `~/Library/Logs/LocalBot/brain.log`.
 

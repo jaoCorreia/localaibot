@@ -4,8 +4,12 @@ import AppKit
 @main
 struct LocalBotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Shared by the window and the menu bar icon.
+    @ObservedObject private var model = AppModel.shared
 
     init() {
+        // Launched by the background service just to post a notification.
+        if Notifier.postAndExitIfAsked() { return }
         // Running as a bare executable (swift run) has no bundle; make it a regular app.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -14,8 +18,8 @@ struct LocalBotApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Local Bot") {
-            ContentView()
+        WindowGroup("Local Bot", id: MenuBar.windowID) {
+            ContentView(model: model)
                 .frame(minWidth: 760, minHeight: 560)
         }
         .windowStyle(.hiddenTitleBar)
@@ -25,16 +29,43 @@ struct LocalBotApp: App {
                     .disabled(!Updater.shared.enabled)
             }
         }
+
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
+            MenuBar.windowClosed()
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { _ in
+            MenuBar.quitting = true
+        }
+        Task { @MainActor in StatusBar.shared.setUp(model: AppModel.shared) }
+        // Opened at login: start in the menu bar, without a window.
+        if CommandLine.arguments.contains("--background") {
+            DispatchQueue.main.async { MenuBar.hide() }
+        }
+    }
+
+    /// Clicking the Dock icon (or opening the app again) shows the window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        sender.setActivationPolicy(.regular)
+        return true
+    }
+
     /// AppKit refuses to quit while a sheet (Settings, a bot editor…) is open,
     /// which also left Sparkle's "Install and Relaunch" waiting forever. Close
     /// the sheets and quit.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         for window in sender.windows {
             while let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        // In the menu bar, ⌘Q just closes the window; Quit in its menu, an
+        // update or logging out really quits.
+        if MenuBar.keepsRunning {
+            MenuBar.hide()
+            return .terminateCancel
         }
         return .terminateNow
     }
@@ -71,6 +102,7 @@ enum Sheet: Identifiable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let shared = AppModel()
     let brain = Brain()
     let updater = Updater.shared
     @Published var selection: Selection?
@@ -105,7 +137,7 @@ final class AppModel: ObservableObject {
 }
 
 struct ContentView: View {
-    @StateObject private var model = AppModel()
+    @ObservedObject var model: AppModel
 
     var body: some View {
         MainView(model: model, brain: model.brain)
@@ -115,6 +147,7 @@ struct ContentView: View {
 struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 248
     @AppStorage("chatWidth") private var chatWidth: Double = 380
 
@@ -144,7 +177,11 @@ struct MainView: View {
         .foregroundStyle(Theme.text)
         .tint(Theme.text)
         .onAppear {
+            // The menu bar can reopen the window after it was closed.
+            MenuBar.openMainWindow = { [openWindow] in openWindow(id: MenuBar.windowID) }
             brain.start()
+            Notifier.shared.setUp()
+            Notifier.shared.openBot = { id in model.selection = .bot(id) }
             model.updater.start()
         }
         .task {

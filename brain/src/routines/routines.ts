@@ -29,6 +29,7 @@ export interface RunOutcome {
 
 type Runner = (routine: Routine) => Promise<RunOutcome>;
 type Busy = (botId: string) => boolean;
+type Finished = (routine: Routine, outcome: RunOutcome) => void;
 
 /** How often the scheduler wakes up to look for due routines. */
 const TICK_MS = 30_000;
@@ -42,7 +43,13 @@ export class Routines {
   private items = new Collection<Routine>("routines.json");
   private timer?: NodeJS.Timeout;
 
-  constructor(private runner: Runner, private busy: Busy, private changed: () => void) {
+  constructor(
+    private runner: Runner,
+    private busy: Busy,
+    private changed: () => void,
+    /** Told about every finished run (notifications). */
+    private finished: Finished = () => {},
+  ) {
     // Anything left "running" by a previous process didn't finish.
     for (const r of this.items.where((x) => x.lastStatus === "running")) {
       this.items.upsert({ ...r, lastStatus: "failed", lastError: "Interrupted (the app was closed)" });
@@ -175,5 +182,6 @@ export class Routines {
       enabled: latest.schedule.kind === "once" && scheduled ? false : latest.enabled,
     });
     this.changed();
+    this.finished(latest, outcome);
   }
 }
