@@ -11,6 +11,7 @@ struct SettingsSheet: View {
     enum Page: Hashable {
         case reset
         case appearance
+        case background
         case defaults
         case addProvider
         case provider(String)
@@ -55,6 +56,7 @@ struct SettingsSheet: View {
             SidebarGroup("General") {
                 SidebarItem(icon: "circle.lefthalf.filled", title: "Appearance", selected: page == .appearance) { page = .appearance }
                 SidebarItem(icon: "sparkles", title: "Default model", selected: page == .defaults) { page = .defaults }
+                SidebarItem(icon: "moon.zzz", title: "Background", selected: page == .background) { page = .background }
                 SidebarItem(icon: "wand.and.stars", title: "Setup assistant", muted: true, selected: false) { onRunSetup() }
                 SidebarItem(icon: "arrow.counterclockwise", title: "Reset", selected: page == .reset) { page = .reset }
             }
@@ -102,6 +104,8 @@ struct SettingsSheet: View {
             ResetPage(brain: brain, onReset: onRunSetup)
         case .appearance:
             AppearancePage()
+        case .background:
+            BackgroundPage()
         case .defaults:
             DefaultsPage(brain: brain)
         case .addProvider:

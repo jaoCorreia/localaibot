@@ -15,11 +15,12 @@ Ideas and known gaps, roughly grouped. Not ordered by priority.
 
 ## Routines
 
-- **Run while the app is closed.** The scheduler lives in the brain, which the
-  app starts, so routines only run with Local Bot open. Move the brain into a
-  background service (LaunchAgent) so routines run 24/7.
-- **Notifications** when a routine finishes or fails (needs a bundled app with
-  a bundle id for `UNUserNotificationCenter`).
+Done: routines run with the app closed (Settings → Background installs a
+LaunchAgent; one brain owns the data at a time over ~/.local-bot/brain.sock),
+notifications when a routine finishes or fails, and a menu bar icon.
+
+- **Open at login without the LaunchAgent trick:** `SMAppService` once the app
+  is signed with a Developer ID.
 - **Teach a task:** record the user doing a workflow once (Cua Driver
   trajectory recording) and save it as a routine.
 

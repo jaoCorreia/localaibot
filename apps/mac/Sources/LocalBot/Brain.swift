@@ -328,6 +328,7 @@ final class Brain: ObservableObject {
                 await refreshRoutines()
                 await refreshCloud()
                 loaded = true
+                await checkService()
                 // Computers change outside the app too (docker, lume); poll for state.
                 while !Task.isCancelled && self.connected && self.process === p {
                     await refreshComputers()
@@ -337,6 +338,15 @@ final class Brain: ObservableObject {
         } catch {
             lastError = "Couldn’t start the brain: \(error.localizedDescription)"
         }
+    }
+
+    /// Connected to a background service from an older app version (after an
+    /// update): restart it so it runs this version's brain.
+    private func checkService() async {
+        guard let info = try? await call("app.info") as? [String: Any], info["service"] as? Bool == true,
+              let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              info["version"] as? String != version else { return }
+        BackgroundService.refresh()
     }
 
     func stop() {
@@ -902,6 +912,8 @@ final class Brain: ObservableObject {
             Task { await refreshProviders() }
         case "cloud":
             Task { await refreshCloud() }
+        case "routine.finished":
+            Notifier.shared.routineFinished(data)
         default:
             break
         }

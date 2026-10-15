@@ -54,3 +54,23 @@ test("runNow keeps the schedule; deleteForBot cleans up", async () => {
   r.deleteForBot("bot4");
   assert.equal(r.list("bot4").length, 0);
 });
+
+test("every finished run is reported, with the outcome", async () => {
+  const seen: { name: string; ok: boolean; reply?: string; error?: string }[] = [];
+  let ok = true;
+  const r = new Routines(
+    async () => (ok ? { ok: true, reply: "All good" } : { ok: false, error: "The device is off." }),
+    () => false,
+    () => {},
+    (routine, outcome) => seen.push({ name: routine.name, ...outcome }),
+  );
+  const made = r.create({ botId: "bot5", name: "Report", task: "x", schedule: { kind: "interval", every: 1, unit: "hours" } });
+  await r.runNow(made.id);
+  ok = false;
+  await r.runNow(made.id);
+  await sleep(20);
+  assert.deepEqual(seen, [
+    { name: "Report", ok: true, reply: "All good" },
+    { name: "Report", ok: false, error: "The device is off." },
+  ]);
+});

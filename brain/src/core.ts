@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { avatarOptions, avatarSVG, randomAvatar } from "./bots/avatar.ts";
 import { Bots } from "./bots/bots.ts";
@@ -7,7 +8,7 @@ import { DockerProvider } from "./computers/docker.ts";
 import { LumeProvider } from "./computers/lume.ts";
 import { RailwayProvider } from "./computers/railway.ts";
 import { RemoteProvider } from "./computers/remote.ts";
-import { Routines } from "./routines/routines.ts";
+import { Routines, type Routine, type RunOutcome } from "./routines/routines.ts";
 import { MemoryService } from "./memory/memory.ts";
 import { Collection } from "./store.ts";
 import { CloudLink } from "./cloud/link.ts";
@@ -103,7 +104,41 @@ const routines = new Routines(
   (routine) => conversations.runRoutine(bots.get(routine.botId), routine),
   (botId) => conversations.isBusy(botId),
   () => emit("routines", null),
+  (routine, outcome) => routineFinished(routine, outcome),
 );
+
+/**
+ * Who is listening: the transport counts connected apps. With an app open it
+ * shows notifications itself; with none (the background service alone), the
+ * brain asks the app's executable to post one.
+ */
+export const presence = { clients: 0, service: false };
+
+function routineFinished(routine: Routine, outcome: RunOutcome) {
+  const bot = bots.list().find((b) => b.id === routine.botId);
+  const note = {
+    routineId: routine.id,
+    botId: routine.botId,
+    title: `${bot?.name ?? "Bot"} · ${routine.name}`,
+    body: outcome.ok
+      ? (outcome.reply ?? "Done.").replace(/\s+/g, " ").slice(0, 180)
+      : `Didn’t finish: ${outcome.error ?? "something went wrong"}`,
+    ok: outcome.ok,
+  };
+  emit("routine.finished", note);
+  if (presence.clients === 0) notifyWithApp(note);
+}
+
+/** The app's executable in "notify" mode posts one notification and quits. */
+function notifyWithApp(note: object) {
+  const app = process.env.LOCALBOT_APP_EXECUTABLE;
+  if (!app) return;
+  try {
+    spawn(app, ["--notify", JSON.stringify(note)], { detached: true, stdio: "ignore" }).unref();
+  } catch (err) {
+    log("notification failed:", err instanceof Error ? err.message : String(err));
+  }
+}
 conversations.attachRoutines(routines);
 
 /** Long-term memory; consolidation and summaries use each bot's own model. */
@@ -118,6 +153,8 @@ conversations.attachMemory(memory);
 export type Handler = (params: any) => unknown | Promise<unknown>;
 
 export const methods: Record<string, Handler> = {
+  /** Which brain the app is talking to (it restarts an outdated service). */
+  "app.info": () => ({ version: process.env.LOCALBOT_VERSION ?? "dev", service: presence.service, pid: process.pid }),
   // Computers
   "computers.list": async () => {
     const usable = await Promise.all(computerProviders.map(async (p) => ((await p.available()) ? p : null)));
