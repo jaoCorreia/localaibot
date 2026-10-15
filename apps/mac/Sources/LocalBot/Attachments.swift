@@ -238,16 +238,19 @@ private struct ImageTile: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let image {
-                    Image(nsImage: image).resizable().scaledToFill()
-                } else {
-                    Theme.surface.overlay(ProgressView().controlSize(.small))
+            // The tile's size comes from the clear base; the photo fills it
+            // and is clipped, so a wide image can't push its column wider.
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .frame(height: tall ? 240 : 110)
+                .overlay {
+                    if let image {
+                        Image(nsImage: image).resizable().scaledToFill()
+                    } else {
+                        Theme.surface.overlay(ProgressView().controlSize(.small))
+                    }
                 }
-            }
-            .frame(height: tall ? 240 : 110)
-            .frame(maxWidth: .infinity)
-            .clipped()
+                .clipped()
             if hovering {
                 IconButton(systemImage: "arrow.down", help: "Download") {
                     Task { await SharedFiles.shared.download([file], botID: botID) }

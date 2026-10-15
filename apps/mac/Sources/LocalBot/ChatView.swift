@@ -5,6 +5,8 @@ struct ChatView: View {
     @ObservedObject var brain: Brain
     let bot: Brain.Bot
     @State private var draft = ""
+    /// Whether the end of the chat is on screen; new text follows only then.
+    @State private var atBottom = true
     @State private var tab: Tab = .chat
     @FocusState private var focused: Bool
 
@@ -88,16 +90,32 @@ struct ChatView: View {
                                 .id(steps.first!.id)
                         }
                     }
+                    Color.clear.frame(height: 1).id("bottom")
+                        .onAppear { atBottom = true }
+                        .onDisappear { atBottom = false }
                 }
                 .padding(.horizontal, 18).padding(.vertical, 18)
                 .thinScrollers()
             }
+            // Streaming text follows the end only if the user is there; their
+            // own message always brings them back down.
             .onChange(of: messages.last?.text) {
-                if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
             }
-            .onAppear {
-                if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+            .onChange(of: messages.count) {
+                if atBottom || messages.last?.role == "user" { proxy.scrollTo("bottom", anchor: .bottom) }
             }
+            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .overlay(alignment: .bottom) {
+                if !atBottom && !messages.isEmpty {
+                    ScrollToBottomButton {
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .padding(.bottom, 12)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: atBottom)
         }
         .fadesUnderTopBar(Theme.sidebar)
     }
@@ -244,6 +262,28 @@ extension MessageRow {
 
     static func fullDate(_ at: String) -> String {
         date(at)?.formatted(date: .complete, time: .shortened) ?? ""
+    }
+}
+
+/// Round "jump to latest" button shown while scrolled up in the chat.
+struct ScrollToBottomButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(hovering ? Theme.hover : Theme.raised))
+                .overlay(Circle().stroke(Theme.border))
+                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Jump to latest")
     }
 }
 
