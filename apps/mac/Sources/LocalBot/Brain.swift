@@ -452,6 +452,13 @@ final class Brain: ObservableObject {
     }
 
     /// A code another Local Bot pastes to connect to this device; nil on error (in `lastError`).
+    /// Hides the device's own pointer while watching; shows it for Take control.
+    func setDevicePointer(_ id: String, hidden: Bool) async {
+        // The device screen can show up before the brain is ready.
+        while !loaded && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
+        _ = try? await call("computers.pointer", ["id": id, "hidden": hidden])
+    }
+
     func shareDevice(_ id: String) async -> String? {
         do {
             let raw = try await call("computers.share", ["id": id])

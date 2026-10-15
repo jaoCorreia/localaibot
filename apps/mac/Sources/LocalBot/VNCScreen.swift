@@ -23,8 +23,8 @@ struct VNCScreen: NSViewRepresentable {
         #screen > div { background: transparent !important; }
         """
         // Watching: input never reaches noVNC (capture-phase listeners on the window
-        // run first and stop it), and the Mac's pointer hides over the screen so
-        // only the bot's cursor shows. `window.__localbotViewOnly` is flipped from Swift.
+        // run first and stop it), and the Mac keeps its own pointer instead of the
+        // device's cursor image. `window.__localbotViewOnly` is flipped from Swift.
         let script = WKUserScript(
             source: """
             window.__localbotViewOnly = \(!controlling);
@@ -35,7 +35,7 @@ struct VNCScreen: NSViewRepresentable {
               window.addEventListener(t, block, { capture: true, passive: false });
             document.addEventListener('DOMContentLoaded', () => {
               const s = document.createElement('style');
-              s.textContent = `\(css)` + 'html.lb-view-only #screen, html.lb-view-only #screen * { cursor: none !important; }';
+              s.textContent = `\(css)` + 'html.lb-view-only #screen, html.lb-view-only #screen * { cursor: default !important; }';
               document.documentElement.appendChild(s);
               document.documentElement.classList.toggle('lb-view-only', window.__localbotViewOnly);
             });

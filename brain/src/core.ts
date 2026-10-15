@@ -166,6 +166,16 @@ export const methods: Record<string, Handler> = {
     emit("computers", null);
     botsChanged();
   },
+  /**
+   * Hides the device's own pointer while the user only watches, so the screen
+   * shows just the bot's cursor; it comes back for Take control. Uses XFixes
+   * from a small helper that keeps the hide while it runs.
+   */
+  "computers.pointer": async ({ id, hidden }) => {
+    const hands = await computerProvider(String(id)).hands?.(String(id), "app").catch(() => null);
+    if (!hands) return;
+    await hands.shell(hidden ? HIDE_POINTER : SHOW_POINTER, 15_000);
+  },
   "computers.start": async ({ id }) => {
     const p = computerProvider(id);
     if (!p.start) throw new Error(`${p.name} devices are started by the app`);
@@ -454,6 +464,25 @@ Object.assign(methods, {
  * Methods about a hosted bot go to the cloud brain. `key` names the param
  * that holds the bot id; device ids in params and results are translated.
  */
+const POINTER_HELPER = `import ctypes, time
+x = ctypes.CDLL("libX11.so.6"); xf = ctypes.CDLL("libXfixes.so.3")
+x.XOpenDisplay.restype = ctypes.c_void_p
+x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]; x.XDefaultRootWindow.restype = ctypes.c_ulong
+xf.XFixesHideCursor.argtypes = [ctypes.c_void_p, ctypes.c_ulong]; x.XFlush.argtypes = [ctypes.c_void_p]
+d = x.XOpenDisplay(None)
+xf.XFixesHideCursor(d, x.XDefaultRootWindow(d)); x.XFlush(d)
+while True: time.sleep(3600)
+`;
+// A pidfile, not pgrep: the command line itself contains the helper's name.
+const POINTER_PID = "/tmp/localbot-pointer.pid";
+const HIDE_POINTER = [
+  `kill -0 "$(cat ${POINTER_PID} 2>/dev/null)" 2>/dev/null && exit 0`,
+  `printf '%s' ${JSON.stringify(Buffer.from(POINTER_HELPER).toString("base64"))} | base64 -d > /tmp/localbot-pointer.py`,
+  `DISPLAY=\${DISPLAY:-:1} setsid nohup python3 /tmp/localbot-pointer.py >/dev/null 2>&1 & echo $! > ${POINTER_PID}`,
+].join("; ");
+// The X server shows the pointer again once the helper's connection closes.
+const SHOW_POINTER = `kill "$(cat ${POINTER_PID} 2>/dev/null)" 2>/dev/null; rm -f ${POINTER_PID}; true`;
+
 const botScoped: Record<string, string> = {
   "bots.update": "id", "bots.regenerateAvatar": "id",
   "memory.list": "botId", "memory.add": "botId", "memory.edit": "botId", "memory.forget": "botId",
