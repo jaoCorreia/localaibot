@@ -567,9 +567,14 @@ export class Conversations {
   }
 
   /** A shared file's contents, for the app to save or preview. */
-  readFile(botId: string, fileId: string) {
+  /**
+   * A shared file for the app: its path when the app can read this disk
+   * (`inline: false`), else its bytes in base64 (a brain in the cloud).
+   */
+  readFile(botId: string, fileId: string, inline = true) {
     const file = this.history(botId).flatMap((m) => m.files ?? []).find((f) => f.id === fileId);
     if (!file) throw new Error("That file is no longer in the chat");
+    if (!inline) return { ...file, path: this.files.path(botId, file) };
     return { ...file, data: this.files.read(botId, file).toString("base64") };
   }
 

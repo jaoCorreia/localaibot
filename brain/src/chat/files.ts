@@ -43,7 +43,12 @@ export class FileStore {
   }
 
   read(botId: string, file: Attachment): Buffer {
-    return readFileSync(join(this.root, safe_(botId), safe_(file.id), basename(file.name)));
+    return readFileSync(this.path(botId, file));
+  }
+
+  /** Where it is on this machine (the app on the same Mac copies it directly). */
+  path(botId: string, file: Attachment) {
+    return join(this.root, safe_(botId), safe_(file.id), basename(file.name));
   }
 
   clearAll() {

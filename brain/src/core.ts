@@ -386,7 +386,7 @@ export const methods: Record<string, Handler> = {
   "chat.stop": ({ botId }) => conversations.stop(botId),
   "chat.clear": ({ botId }) => conversations.clear(botId),
   /** A file a bot shared, base64-encoded, for the app to save or preview. */
-  "chat.file": ({ botId, fileId }) => conversations.readFile(String(botId), String(fileId)),
+  "chat.file": ({ botId, fileId, inline }) => conversations.readFile(String(botId), String(fileId), inline !== false),
 
   // Conversation providers (keys never leave the brain)
   "providers.status": () => providerStatus(),

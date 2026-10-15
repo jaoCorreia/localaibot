@@ -192,8 +192,12 @@ test("share_file copies files off the device into the chat, downloadable", async
   assert.equal(shared!.files![0].mime, "application/pdf");
   assert.equal(shared!.files![0].size, pdf.length);
   assert.ok(conv.history(id.a).some((m) => m.role === "activity" && m.text === "Couldn’t share a file"));
-  const file = conv.readFile(id.a, shared!.files![0].id);
+  const file = conv.readFile(id.a, shared!.files![0].id) as { data: string };
   assert.ok(Buffer.from(file.data, "base64").equals(pdf));
+  // On the same Mac the app reads it from disk instead.
+  const { path } = conv.readFile(id.a, shared!.files![0].id, false) as { path: string };
+  const { readFileSync } = await import("node:fs");
+  assert.ok(readFileSync(path).equals(pdf));
   conv.clear(id.a);
   assert.throws(() => conv.readFile(id.a, shared!.files![0].id));
 });

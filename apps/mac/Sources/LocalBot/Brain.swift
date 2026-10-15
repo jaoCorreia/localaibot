@@ -260,7 +260,6 @@ final class Brain: ObservableObject {
 
     private var process: Process?
     private var stdin: FileHandle?
-    private var buffer = Data()
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<Any?, Error>] = [:]
 
@@ -302,9 +301,14 @@ final class Brain: ObservableObject {
     /// A file a bot shared in the chat.
     func fileData(botID: String, fileID: String) async -> Data? {
         do {
+            // Same Mac: the brain says where the file is and we read it directly.
+            if let raw = try await call("chat.file", ["botId": botID, "fileId": fileID, "inline": false]) as? [String: Any],
+               let path = raw["path"] as? String, FileManager.default.isReadableFile(atPath: path) {
+                return await Task.detached(priority: .userInitiated) { try? Data(contentsOf: URL(fileURLWithPath: path)) }.value
+            }
+            // A brain elsewhere (cloud): the bytes come in the reply.
             let raw = try await call("chat.file", ["botId": botID, "fileId": fileID])
             guard let b64 = (raw as? [String: Any])?["data"] as? String else { return nil }
-            // Megabytes of base64: decode off the main thread.
             return await Task.detached(priority: .userInitiated) { Data(base64Encoded: b64) }.value
         } catch {
             lastError = error.localizedDescription
@@ -331,9 +335,13 @@ final class Brain: ObservableObject {
         p.standardInput = inPipe
         p.standardOutput = outPipe
         p.standardError = Self.logHandle() ?? FileHandle.standardError
+        // Lines are split and parsed on the pipe's own queue: a big reply (a
+        // file, a long history) never blocks the window.
+        let reader = LineReader()
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            Task { @MainActor in self?.receive(data) }
+            let objects = reader.feed(handle.availableData)
+            guard !objects.isEmpty else { return }
+            Task { @MainActor in self?.receive(objects) }
         }
         p.terminationHandler = { [weak self] proc in
             Task { @MainActor in self?.brainExited(code: proc.terminationStatus) }
@@ -1005,12 +1013,8 @@ final class Brain: ObservableObject {
         }
     }
 
-    private func receive(_ data: Data) {
-        buffer.append(data)
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = buffer[buffer.startIndex..<newline]
-            buffer.removeSubrange(buffer.startIndex...newline)
-            guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+    private func receive(_ objects: [[String: Any]]) {
+        for obj in objects {
             if let id = obj["id"] as? Int, let cont = pending.removeValue(forKey: id) {
                 if let err = obj["error"] as? String {
                     cont.resume(throwing: NSError(domain: "Brain", code: 2, userInfo: [NSLocalizedDescriptionKey: err]))
@@ -1088,4 +1092,26 @@ extension ISO8601DateFormatter {
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+}
+
+/// Splits the brain's output into JSON lines and parses them, off the main
+/// thread. Only the new bytes are searched for the end of a line, so a reply
+/// of many megabytes arriving in small chunks costs one pass, not one per chunk.
+/// Used from one pipe's handler, which runs serially.
+final class LineReader: @unchecked Sendable {
+    private var buffer = Data()
+    private var scanned = 0
+
+    func feed(_ data: Data) -> [[String: Any]] {
+        buffer.append(data)
+        var objects: [[String: Any]] = []
+        while let newline = buffer[(buffer.startIndex + scanned)...].firstIndex(of: 0x0A) {
+            let line = buffer[buffer.startIndex..<newline]
+            if let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] { objects.append(obj) }
+            buffer = Data(buffer[(newline + 1)...])
+            scanned = 0
+        }
+        scanned = buffer.count
+        return objects
+    }
 }
