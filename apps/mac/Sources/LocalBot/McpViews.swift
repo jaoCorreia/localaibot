@@ -7,6 +7,7 @@ extension Brain.McpServer {
         switch state {
         case "connected": return Theme.live
         case "error": return Theme.danger
+        case "signin": return Theme.warn
         case "connecting": return Theme.warn
         default: return Theme.tertiary
         }
@@ -18,6 +19,7 @@ extension Brain.McpServer {
         case "error": return "Error"
         case "connecting": return "Connecting…"
         case "off": return "Off"
+        case "signin": return "Sign-in needed"
         default: return "Not connected yet"
         }
     }
@@ -227,7 +229,7 @@ struct AddMcpServerPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: "Add MCP server", subtitle: "Give bots more tools: GitHub, files, search, your own services. Turn it on per bot in its settings.", icon: "puzzlepiece.extension")
+            PageHeader(title: "Add MCP server", subtitle: "Give bots more tools: GitHub, files, search, your own services. Then choose which bots can use it.", icon: "puzzlepiece.extension")
             Text("Popular").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary)
                 .padding(.leading, 4).padding(.bottom, 8)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 8)], spacing: 8) {
@@ -283,14 +285,36 @@ struct McpServerPage: View {
     @State private var testing = false
     @State private var confirmRemove = false
 
-    private var botsUsing: [Brain.Bot] { brain.bots.filter { $0.mcpServers?.contains(server.id) == true } }
+    private var botsUsing: [Brain.Bot] {
+        server.allBots == true ? brain.bots : brain.bots.filter { $0.mcpServers?.contains(server.id) == true }
+    }
+    private var isConnector: Bool { server.connector != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: server.name,
-                       subtitle: server.isRemote ? (server.url ?? "") : server.commandLine,
-                       icon: server.isRemote ? "globe" : "terminal",
-                       badge: (server.stateLabel, server.stateColor))
+            if let connector = server.connector {
+                HStack(alignment: .center, spacing: 14) {
+                    ConnectorLogo(id: connector, name: server.name, size: 44)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(server.name).font(.system(size: 20, weight: .semibold))
+                            HStack(spacing: 5) {
+                                Circle().fill(server.stateColor).frame(width: 6, height: 6)
+                                Text(server.stateLabel).font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Capsule().fill(Theme.surface)).overlay(Capsule().stroke(Theme.border))
+                        }
+                        Text("Connector · signed in through the browser").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    }
+                }
+                .padding(.bottom, 24)
+            } else {
+                PageHeader(title: server.name,
+                           subtitle: server.isRemote ? (server.url ?? "") : server.commandLine,
+                           icon: server.isRemote ? "globe" : "terminal",
+                           badge: (server.stateLabel, server.stateColor))
+            }
             if editing {
                 McpServerForm(brain: brain, server: server, onSaved: { _ in editing = false }, onCancel: { editing = false })
             } else {
@@ -301,9 +325,27 @@ struct McpServerPage: View {
                             set: { on in Task { _ = await brain.saveMcpServer(id: server.id, ["enabled": on]) } }
                         )).toggleStyle(.switch).labelsHidden()
                     }
-                    SettingRow(label: "Used by",
-                               detail: botsUsing.isEmpty ? "No bot yet. Turn it on in a bot’s settings." : botsUsing.map(\.name).joined(separator: ", ")) {
-                        EmptyView()
+                    SettingRow(label: "Available to",
+                               detail: server.allBots == true ? "Every bot can use it when a task needs it."
+                                   : botsUsing.isEmpty ? "No bot yet. Pick them below." : botsUsing.map(\.name).joined(separator: ", ")) {
+                        Picker("", selection: Binding(
+                            get: { server.allBots == true },
+                            set: { all in Task { _ = await brain.saveMcpServer(id: server.id, ["allBots": all]) } }
+                        )) {
+                            Text("All bots").tag(true)
+                            Text("Some bots").tag(false)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 180)
+                    }
+                    if server.allBots != true {
+                        ForEach(brain.bots) { bot in
+                            SettingRow(label: bot.name) {
+                                Toggle("", isOn: Binding(
+                                    get: { bot.mcpServers?.contains(server.id) == true },
+                                    set: { on in Task { await brain.setBotMcpServer(bot.id, server.id, on: on) } }
+                                )).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                            }
+                        }
                     }
                 }
                 Card(title: "Tools") {
@@ -323,6 +365,17 @@ struct McpServerPage: View {
                                    detail: server.tools == nil ? "Test the connection to list them." : nil) { EmptyView() }
                     }
                 }
+                if server.state == "signin" || server.state == "error", isConnector {
+                    HStack {
+                        Label(server.signingIn == true ? "Finish signing in in your browser." : "Sign in again to keep using it.",
+                              systemImage: "person.badge.key").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                        Spacer()
+                        PillButton(title: server.signingIn == true ? "Open again" : "Sign in", systemImage: "arrow.up.forward.app", prominent: true) {
+                            Task { _ = await brain.connect(server.connector!) }
+                        }
+                    }
+                    .padding(.bottom, 20)
+                }
                 if !server.errors.isEmpty {
                     Card(title: "Recent errors") {
                         ForEach(server.errors, id: \.self) { e in
@@ -334,9 +387,11 @@ struct McpServerPage: View {
                     }
                 }
                 HStack {
-                    DestructiveButton(title: "Remove") { confirmRemove = true }
+                    DestructiveButton(title: isConnector ? "Disconnect" : "Remove") { confirmRemove = true }
                     Spacer()
-                    PillButton(title: "Edit", systemImage: "pencil") { editing = true }
+                    if !isConnector {
+                        PillButton(title: "Edit", systemImage: "pencil") { editing = true }
+                    }
                     PillButton(title: testing ? "Testing…" : "Test", systemImage: "bolt.horizontal", prominent: true) {
                         testing = true
                         Task { _ = await brain.testMcpServer(server.id); testing = false }
@@ -345,74 +400,12 @@ struct McpServerPage: View {
                 }
             }
         }
-        .confirmationDialog("Remove \(server.name)?", isPresented: $confirmRemove) {
-            Button("Remove", role: .destructive) {
+        .confirmationDialog("\(isConnector ? "Disconnect" : "Remove") \(server.name)?", isPresented: $confirmRemove) {
+            Button(isConnector ? "Disconnect" : "Remove", role: .destructive) {
                 Task { await brain.removeMcpServer(server.id); onRemoved() }
             }
         } message: {
-            Text("Bots stop using its tools. Its saved token and variables are deleted from the Keychain.")
-        }
-    }
-}
-
-/// Bot editor → Advanced: which MCP servers this bot may use. Collapsed by
-/// default; MCP is for people who know they want it.
-struct McpServerToggles: View {
-    @ObservedObject var brain: Brain
-    @Binding var selection: [String]
-    @State private var open = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                    Text("Advanced").font(.system(size: 11, weight: .medium))
-                    if !selection.isEmpty && !open {
-                        Text("· \(selection.count) MCP server\(selection.count == 1 ? "" : "s")").font(.system(size: 11))
-                    }
-                }
-                .foregroundStyle(Theme.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if open {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("MCP servers").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
-                    if brain.mcpServers.isEmpty {
-                        Text("None yet. Add them in Settings → MCP Servers.")
-                            .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(brain.mcpServers) { s in
-                                HStack(spacing: 8) {
-                                    Circle().fill(s.stateColor).frame(width: 6, height: 6)
-                                    Text(s.name).font(.system(size: 13))
-                                    Text(s.stateLabel).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                                    Spacer()
-                                    Toggle("", isOn: Binding(
-                                        get: { selection.contains(s.id) },
-                                        set: { on in
-                                            selection.removeAll { $0 == s.id }
-                                            if on { selection.append(s.id) }
-                                        }
-                                    ))
-                                    .toggleStyle(.switch).controlSize(.small).labelsHidden()
-                                    .disabled(!s.enabled)
-                                }
-                                .padding(.horizontal, 10).padding(.vertical, 7)
-                            }
-                        }
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface))
-                        .hairline(8)
-                        Text("Their tools are offered to this bot.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                    }
-                }
-            }
+            Text(isConnector ? "Bots stop using it, and Local Bot forgets the sign-in." : "Bots stop using its tools. Its saved token and variables are deleted from the Keychain.")
         }
     }
 }

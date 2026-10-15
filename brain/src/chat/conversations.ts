@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Collection } from "../store.ts";
 import type { Bot } from "../bots/bots.ts";
-import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, SHARE_FILE_TOOL, runTool } from "../agent/tools.ts";
+import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, SHARE_FILE_TOOL, runTool, suggestConnectionTool } from "../agent/tools.ts";
 import { FileStore, readDeviceFile, type Attachment } from "./files.ts";
 import type { McpServers } from "../mcp/servers.ts";
 import type { Routines } from "../routines/routines.ts";
@@ -28,6 +28,20 @@ export interface Message {
   from?: { botId: string; name: string };
   /** Files the bot handed over (share_file), downloadable from the chat. */
   files?: Attachment[];
+  /** A card asking the user to connect (or allow) an app the bot needs. */
+  connect?: ConnectRequest;
+  /** A note from Local Bot itself (e.g. "Notion is connected"), not the user. */
+  notice?: boolean;
+}
+
+export interface ConnectRequest {
+  connector: string;
+  name: string;
+  description: string;
+  /** "connect": sign in first; "allow": signed in, not on for this bot yet. */
+  mode: "connect" | "allow";
+  reason?: string;
+  state: "pending" | "connected" | "dismissed";
 }
 
 export interface Workplace {
@@ -43,6 +57,8 @@ type Team = () => Bot[];
 interface TurnOptions {
   routine?: Message["routine"];
   from?: Message["from"];
+  /** Posted by Local Bot itself (an app got connected). */
+  notice?: boolean;
   /** Bots already working on this request, outermost first (prevents loops). */
   chain?: string[];
 }
@@ -138,13 +154,13 @@ export class Conversations {
   }
 
   private start(bot: Bot, text: string, opts: TurnOptions = {}) {
-    const { routine, from } = opts;
+    const { routine, from, notice } = opts;
     const chain = opts.chain ?? [bot.id];
     if (this.running.has(bot.id)) throw new Error(`${bot.name} is still working`);
     const prompt = text.trim();
     if (!prompt) throw new Error("Empty message");
 
-    const user = this.add({ botId: bot.id, role: "user", text: prompt, ...(routine ? { routine } : {}), ...(from ? { from } : {}) });
+    const user = this.add({ botId: bot.id, role: "user", text: prompt, ...(routine ? { routine } : {}), ...(from ? { from } : {}), ...(notice ? { notice } : {}) });
     this.emit("message", user);
 
     const abort = new AbortController();
@@ -169,8 +185,11 @@ export class Conversations {
     // A routine run may look at routines but not create more (no runaway chains).
     const routineTools = !this.routines ? [] : inRoutine ? ROUTINE_TOOLS.filter((t) => t.name === "list_routines") : ROUTINE_TOOLS;
     const servers = bot.mcpServers ?? [];
-    const mcpTools = this.mcp && servers.length ? await this.mcp.toolsFor(servers) : [];
-    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : []), ...routineTools, ...(this.memory ? MEMORY_TOOLS : []), ...mcpTools];
+    const mcpTools = this.mcp ? await this.mcp.toolsFor(servers) : [];
+    // Apps it could ask the user to connect (or to allow for this bot).
+    const offers = this.mcp ? this.mcp.connectorsFor(servers).filter((c) => c.status !== "ready") : [];
+    const connectTool = offers.length ? [suggestConnectionTool(offers.map((c) => c.id))] : [];
+    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : []), ...routineTools, ...(this.memory ? MEMORY_TOOLS : []), ...mcpTools, ...connectTool];
     let lastReply: string | undefined;
     let place: Workplace | null = null;
     try {
@@ -180,6 +199,13 @@ export class Conversations {
     }
     const transcript: ChatMessage[] = [
       { role: "system", content: this.system(bot, place, teammates) },
+      ...(offers.length
+        ? [{
+            role: "system" as const,
+            content: "Apps the user can connect for you (use suggest_connection when a task needs one you don't have):\n" +
+              offers.map((c) => `- ${c.id}: ${c.name} (${c.description})${c.status === "allow" ? " — already connected, needs the user's OK for you" : ""}`).join("\n"),
+          }]
+        : []),
       ...(this.memory ? [{ role: "system" as const, content: this.memory.context(bot, this.lastPrompt(bot)) }] : []),
       ...this.summary(bot),
       ...this.past(bot),
@@ -253,6 +279,11 @@ export class Conversations {
         }
         if (call.function.name === ASK_BOT_TOOL.name) {
           content = await this.delegate(bot, chain, call.function.arguments, signal);
+          transcript.push({ role: "tool", tool_call_id: call.id, content });
+          continue;
+        }
+        if (call.function.name === "suggest_connection") {
+          content = this.suggestConnection(bot, offers, call.function.arguments);
           transcript.push({ role: "tool", tool_call_id: call.id, content });
           continue;
         }
@@ -483,6 +514,53 @@ export class Conversations {
     ].filter(Boolean).join("\n");
   }
 
+  /** Posts a Connect (or Allow) card in the chat for an app the bot needs. */
+  private suggestConnection(bot: Bot, offers: { id: string; name: string; description: string; status: string }[], rawArgs: string) {
+    let args: { connector?: string; reason?: string } = {};
+    try { args = JSON.parse(rawArgs || "{}"); } catch {}
+    const c = offers.find((o) => o.id === args.connector);
+    if (!c) return "Error: that app isn't one the user can connect.";
+    const request: ConnectRequest = {
+      connector: c.id, name: c.name, description: c.description,
+      mode: c.status === "allow" ? "allow" : "connect",
+      reason: args.reason?.slice(0, 200), state: "pending",
+    };
+    this.emit("message", this.add({ botId: bot.id, role: "assistant", text: "", connect: request }));
+    return `Asked the user to ${request.mode === "allow" ? "allow" : "connect"} ${c.name}. Don't go on with the task now: ` +
+      "tell them in one short sentence that you'll continue once it's done. You'll get a message when it is.";
+  }
+
+  /**
+   * An app got connected (or allowed for one bot): mark the waiting cards and
+   * let those bots continue where they stopped.
+   */
+  connectorReady(connector: string, onlyBot?: string) {
+    const waiting = this.messages.where((m) => m.connect?.connector === connector && m.connect.state === "pending"
+      && (!onlyBot || m.botId === onlyBot));
+    const bots = new Set<string>();
+    for (const m of waiting) {
+      this.emit("message", this.messages.upsert({ ...m, connect: { ...m.connect!, state: "connected" } }));
+      bots.add(m.botId);
+    }
+    for (const id of bots) {
+      const bot = this.team().find((b) => b.id === id);
+      const name = waiting.find((m) => m.botId === id)!.connect!.name;
+      if (!bot || this.running.has(id)) continue;
+      try {
+        this.start(bot, `${name} is connected now. Continue the task you were working on.`, { notice: true });
+      } catch (err) {
+        process.stderr.write(`[brain] couldn’t continue after connecting: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
+    }
+  }
+
+  /** "Not now" on a Connect card. */
+  dismissConnect(messageId: string) {
+    const m = this.messages.get(messageId);
+    if (!m?.connect) return;
+    this.emit("message", this.messages.upsert({ ...m, connect: { ...m.connect, state: "dismissed" } }));
+  }
+
   /** A shared file's contents, for the app to save or preview. */
   readFile(botId: string, fileId: string) {
     const file = this.history(botId).flatMap((m) => m.files ?? []).find((f) => f.id === fileId);
@@ -525,7 +603,7 @@ export class Conversations {
 
   private past(bot: Bot): ChatMessage[] {
     return this.history(bot.id)
-      .filter((m) => (m.role === "user" || m.role === "assistant") && !m.error && (m.text || m.files?.length))
+      .filter((m) => (m.role === "user" || m.role === "assistant") && !m.error && (m.text || m.files?.length || m.connect))
       .slice(-HISTORY_LIMIT)
       .map((m) => ({
         role: m.role as "user" | "assistant",
@@ -535,7 +613,11 @@ export class Conversations {
           ? `[Scheduled routine “${m.routine.name}”] ${m.text}`
           : m.from
             ? `[From bot “${m.from.name}”] ${m.text}`
-            : m.text,
+            : m.notice
+              ? `[Local Bot] ${m.text}`
+              : m.connect
+                ? `(Asked the user to ${m.connect.mode} ${m.connect.name}: ${m.connect.state})`
+                : m.text,
       }));
   }
 

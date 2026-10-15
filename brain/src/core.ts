@@ -13,6 +13,7 @@ import { MemoryService } from "./memory/memory.ts";
 import { Collection } from "./store.ts";
 import { CloudLink } from "./cloud/link.ts";
 import { McpServers } from "./mcp/servers.ts";
+import { CONNECTORS } from "./mcp/connectors.ts";
 import type { ComputerProvider } from "./computers/types.ts";
 
 /**
@@ -151,7 +152,11 @@ const memory = new MemoryService(
 conversations.attachMemory(memory);
 
 /** MCP servers from Settings; their tools go to the bots that enable them. */
-const mcp = new McpServers(() => emit("mcp", null));
+const mcp = new McpServers(
+  () => emit("mcp", null),
+  // A connector got signed in: bots waiting on it in the chat continue.
+  (connector) => conversations.connectorReady(connector),
+);
 conversations.attachMcp(mcp);
 // Local servers are child processes: stop them with the brain.
 process.on("exit", () => mcp.stopAll());
@@ -160,6 +165,28 @@ process.on("exit", () => mcp.stopAll());
 export type Handler = (params: any) => unknown | Promise<unknown>;
 
 export const methods: Record<string, Handler> = {
+  // Connectors: services in one click (each is an MCP server with a sign-in)
+  "connectors.list": () => {
+    const servers = mcp.list();
+    return CONNECTORS.map((c) => ({ ...c, server: servers.find((s) => s.connector === c.id) ?? null }));
+  },
+  /** Starts the sign-in; returns the page for the app to open in the browser. */
+  "connectors.connect": async ({ id }) => {
+    const entry = CONNECTORS.find((c) => c.id === id);
+    if (!entry) throw new Error("Unknown connector");
+    const server = mcp.connector(entry);
+    return { url: await mcp.signIn(server.id), serverId: server.id };
+  },
+  /** "Allow" on a chat card: the bot may use a connected app; it continues. */
+  "connectors.allow": ({ botId, id }) => {
+    const server = mcp.list().find((s) => s.connector === id);
+    if (!server) throw new Error("That app isn’t connected");
+    const bot = bots.get(String(botId));
+    if (!server.allBots) bots.update(bot.id, { mcpServers: [...(bot.mcpServers ?? []), server.id] });
+    botsChanged();
+    conversations.connectorReady(String(id), bot.id);
+  },
+  "connectors.dismiss": ({ messageId }) => conversations.dismissConnect(String(messageId)),
   // MCP servers (Settings → MCP Servers)
   "mcp.list": () => mcp.list(),
   "mcp.add": (input) => mcp.add(input),

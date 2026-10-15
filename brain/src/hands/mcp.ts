@@ -5,12 +5,19 @@ import type { Hands, Screenshot } from "./types.ts";
  * URL, answered as JSON or as a short SSE stream. Enough to drive a device's
  * hands; no server-initiated messages.
  */
+/** Tokens that can change (OAuth): read per request, refreshed on a 401. */
+export interface TokenSource {
+  get(): Promise<string | undefined>;
+  /** Gets a new token; false when it can't (sign in again). */
+  refresh(): Promise<boolean>;
+}
+
 export class McpClient {
   private sessionId?: string;
   private initialized?: Promise<void>;
   private nextId = 1;
 
-  constructor(private url: string, private token?: string, private timeoutMs = 90_000, private who = "The device") {}
+  constructor(private url: string, private token?: string | TokenSource, private timeoutMs = 90_000, private who = "The device") {}
 
   /** Calls a tool and returns its result (content, structuredContent, isError). */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
@@ -45,18 +52,23 @@ export class McpClient {
     return reply?.result;
   }
 
-  private async post(message: object, timeoutMs = this.timeoutMs): Promise<any> {
+  private async post(message: object, timeoutMs = this.timeoutMs, retried = false): Promise<any> {
+    const token = typeof this.token === "string" ? this.token : await this.token?.get();
     const res = await fetch(this.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
-        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
       },
       body: JSON.stringify(message),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    // An expired sign-in: refresh once and retry.
+    if (res.status === 401 && !retried && this.token && typeof this.token !== "string" && (await this.token.refresh())) {
+      return this.post(message, timeoutMs, true);
+    }
     this.sessionId = res.headers.get("mcp-session-id") ?? this.sessionId;
     if (res.status === 401 || res.status === 403) throw new Error(`${this.who} refused the token`);
     if (res.status === 202) return undefined;

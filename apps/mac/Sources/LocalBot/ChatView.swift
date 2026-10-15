@@ -185,7 +185,13 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var content: some View {
-        if message.role == "user" {
+        if message.notice == true {
+            // From Local Bot itself: a quiet line, not a user bubble.
+            Label(message.text.replacingOccurrences(of: " Continue the task you were working on.", with: " · continuing"),
+                  systemImage: "checkmark.circle")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                .frame(maxWidth: .infinity)
+        } else if message.role == "user" {
             VStack(alignment: .trailing, spacing: 4) {
               if let routine = message.routine {
                 Label("Routine · \(routine.name)", systemImage: "clock.arrow.circlepath")
@@ -214,12 +220,15 @@ struct MessageRow: View {
                 AnimatedFace(face: bot.face, size: 22, working: streaming, seed: bot.id,
                              failed: message.error != nil).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 6) {
-                    if message.text.isEmpty && message.error == nil && (message.files ?? []).isEmpty {
+                    if message.text.isEmpty && message.error == nil && (message.files ?? []).isEmpty && message.connect == nil {
                         TypingDots()
                     } else if !message.text.isEmpty {
                         MarkdownText(text: message.text)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let request = message.connect {
+                        ConnectCard(request: request, messageID: message.id, botID: message.botId)
                     }
                     if let files = message.files, !files.isEmpty {
                         AttachmentsView(files: files, botID: message.botId)

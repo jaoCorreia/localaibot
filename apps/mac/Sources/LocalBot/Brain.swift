@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// Client for the TypeScript brain process. Protocol: one JSON object per line
 /// over stdio. Requests `{id, method, params}` get `{id, result}` or `{id, error}`;
@@ -111,6 +112,19 @@ final class Brain: ObservableObject {
         var from: FromRef?
         /// Files the bot shared (share_file).
         var files: [Attachment]?
+        /// A card asking to connect (or allow) an app.
+        var connect: ConnectRequest?
+        /// Posted by Local Bot itself (an app got connected), not the user.
+        var notice: Bool?
+
+        struct ConnectRequest: Decodable, Hashable {
+            let connector: String
+            let name: String
+            let description: String
+            let mode: String          // connect | allow
+            let reason: String?
+            let state: String         // pending | connected | dismissed
+        }
 
         struct FromRef: Decodable, Hashable { let botId: String; let name: String }
 
@@ -233,6 +247,7 @@ final class Brain: ObservableObject {
     private var botStatusRevision: [String: Int] = [:]
     @Published private(set) var routines: [Routine] = []
     @Published private(set) var mcpServers: [McpServer] = []
+    @Published private(set) var connectors: [Connector] = []
     @Published private(set) var memories: [String: [Memory]] = [:]
     @Published private(set) var providerStatus: ProviderStatus?
     /// Model lists per provider id.
@@ -488,7 +503,11 @@ final class Brain: ObservableObject {
         let envKeys: [String]?
         let enabled: Bool
         let hasToken: Bool
-        let state: String              // off | idle | connecting | connected | error
+        let state: String              // off | signin | idle | connecting | connected | error
+        /// Offered to every bot (connectors).
+        let allBots: Bool?
+        let connector: String?
+        let signingIn: Bool?
         let tools: [Tool]?
         let errors: [Failure]
 
@@ -499,6 +518,32 @@ final class Brain: ObservableObject {
 
     func refreshMcp() async {
         if let list: [McpServer] = try? await request("mcp.list") { mcpServers = list }
+        if let list: [Connector] = try? await request("connectors.list") { connectors = list }
+    }
+
+    /// Mirrors brain/src/mcp/connectors.ts, with its server once connected.
+    struct Connector: Decodable, Identifiable, Hashable {
+        let id: String
+        let name: String
+        let description: String
+        let url: String
+        let category: String
+        let server: McpServer?
+
+        var connected: Bool { server?.state == "connected" || server?.state == "idle" || server?.state == "connecting" }
+    }
+
+    /// Starts signing in; opens the service's page in the browser.
+    func connect(_ connectorID: String) async -> String? {
+        do {
+            let raw = try await call("connectors.connect", ["id": connectorID])
+            await refreshMcp()
+            guard let s = (raw as? [String: Any])?["url"] as? String, let url = URL(string: s) else { return "No sign-in page" }
+            NSWorkspace.shared.open(url)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// Adds or updates a server; returns its id, or nil with `lastError` set.
@@ -518,6 +563,26 @@ final class Brain: ObservableObject {
     func testMcpServer(_ id: String) async -> String? {
         defer { Task { await refreshMcp() } }
         do { _ = try await call("mcp.test", ["id": id]); return nil } catch { return error.localizedDescription }
+    }
+
+    /// "Allow" on a chat card: the bot may use a connected app and continues.
+    func allowConnector(botID: String, connectorID: String) async {
+        await perform("connectors.allow", ["botId": botID, "id": connectorID])
+        await refreshBots()
+    }
+
+    /// "Not now" on a chat card.
+    func dismissConnect(messageID: String) async {
+        await perform("connectors.dismiss", ["messageId": messageID])
+    }
+
+    /// Lets one bot use a server (or not), keeping its other servers.
+    func setBotMcpServer(_ botID: String, _ serverID: String, on: Bool) async {
+        guard let bot = bots.first(where: { $0.id == botID }) else { return }
+        var list = (bot.mcpServers ?? []).filter { $0 != serverID }
+        if on { list.append(serverID) }
+        await perform("bots.update", ["id": botID, "mcpServers": list])
+        await refreshBots()
     }
 
     func removeMcpServer(_ id: String) async {
@@ -951,7 +1016,8 @@ final class Brain: ObservableObject {
             }
             if let i = list.firstIndex(where: { $0.id == msg.id }) {
                 // The final message carries the full text; keep streamed text if it's empty.
-                if !msg.text.isEmpty || msg.error != nil { list[i] = msg }
+                // Cards (connect, files) have no text but do change (connected, dismissed).
+                if !msg.text.isEmpty || msg.error != nil || msg.connect != nil || msg.files != nil { list[i] = msg }
             } else {
                 list.append(msg)
             }

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { McpClient, type ToolResult } from "../hands/mcp.ts";
+import { McpClient, type TokenSource, type ToolResult } from "../hands/mcp.ts";
+import { refresh as refreshTokens, startSignIn, type OAuthTokens, type SignIn } from "./oauth.ts";
 import { secrets } from "../secrets.ts";
 import { Collection } from "../store.ts";
 import type { ToolSpec } from "../chat/types.ts";
 import { StdioMcpClient } from "./stdio.ts";
+import { CONNECTORS, type Connector } from "./connectors.ts";
 
 /**
  * MCP servers the user adds in Settings: remote ones over HTTP, local ones
@@ -20,6 +22,12 @@ export interface McpServerConfig {
   args?: string[];
   /** Names of environment variables; values are in the Keychain. */
   envKeys?: string[];
+  /** Signs in with OAuth (connectors); tokens are in the Keychain. */
+  auth?: "oauth";
+  /** The catalog entry it was added from (Connectors). */
+  connector?: string;
+  /** Offered to every bot, not just the ones that switch it on. */
+  allBots?: boolean;
   enabled: boolean;
   createdAt: string;
 }
@@ -48,10 +56,12 @@ export interface McpServerInput {
   /** Replaces all variables when given. */
   env?: Record<string, string>;
   enabled?: boolean;
+  allBots?: boolean;
 }
 
 const MAX_OUTPUT = 8000;
 const tokenAccount = (id: string) => `mcp:${id}:token`;
+const oauthAccount = (id: string) => `mcp:${id}:oauth`;
 const envAccount = (id: string, key: string) => `mcp:${id}:env:${key}`;
 
 /** "My GitHub" → "my_github"; tool names must be short and plain. */
@@ -60,12 +70,30 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(
 export class McpServers {
   private items = new Collection<McpServerConfig>("mcp.json", 0o600);
   private runtime = new Map<string, Runtime>();
+  private signIns = new Map<string, SignIn>();
 
-  constructor(private changed: () => void = () => {}) {}
+  constructor(
+    private changed: () => void = () => {},
+    /** A connector finished signing in (the chat continues waiting tasks). */
+    private connected: (connectorId: string) => void = () => {},
+  ) {}
+
+  /**
+   * Where each catalog connector stands for a bot: "ready" (it can use it),
+   * "allow" (signed in, but not on for this bot) or "connect".
+   */
+  connectorsFor(serverIds: string[], catalog: Connector[] = CONNECTORS) {
+    const usable = new Set(this.forBot(serverIds).map((s) => s.connector).filter(Boolean));
+    return catalog.map((c) => {
+      const server = this.items.where((x) => x.connector === c.id)[0];
+      const signedIn = !!server && !!secrets.get(oauthAccount(server.id)) && server.enabled;
+      return { ...c, serverId: server?.id, status: usable.has(c.id) ? "ready" : signedIn ? "allow" : "connect" } as const;
+    });
+  }
 
   /** Loads the servers' secrets so clients can be built synchronously. */
   async init() {
-    await secrets.load(this.items.all().flatMap((s) => [tokenAccount(s.id), ...(s.envKeys ?? []).map((k) => envAccount(s.id, k))]));
+    await secrets.load(this.items.all().flatMap((s) => [tokenAccount(s.id), oauthAccount(s.id), ...(s.envKeys ?? []).map((k) => envAccount(s.id, k))]));
   }
 
   list() {
@@ -77,7 +105,8 @@ export class McpServers {
     return {
       ...s,
       hasToken: !!secrets.get(tokenAccount(s.id)),
-      state: !s.enabled ? "off" : rt?.state ?? "idle",
+      signingIn: this.signIns.has(s.id),
+      state: !s.enabled ? "off" : s.auth === "oauth" && !secrets.get(oauthAccount(s.id)) ? "signin" : rt?.state ?? "idle",
       tools: rt?.tools ?? null,
       errors: rt?.errors ?? [],
     };
@@ -97,6 +126,19 @@ export class McpServers {
     return this.view(config);
   }
 
+  /** A connector from the catalog: a remote server with a sign-in, for all bots. */
+  connector(entry: { id: string; name: string; url: string }) {
+    const existing = this.items.where((x) => x.connector === entry.id)[0];
+    if (existing) return existing;
+    const config: McpServerConfig = {
+      id: randomUUID(), name: entry.name, transport: "http", url: entry.url,
+      auth: "oauth", connector: entry.id, allBots: true, enabled: true, createdAt: new Date().toISOString(),
+    };
+    this.items.upsert(config);
+    this.changed();
+    return config;
+  }
+
   async update(id: string, input: McpServerInput) {
     const config = validate({ ...this.get(id) }, input);
     await this.saveSecrets(config, input);
@@ -109,7 +151,9 @@ export class McpServers {
   async remove(id: string) {
     const s = this.get(id);
     this.reset(id);
+    this.signIns.get(id)?.cancel();
     await secrets.delete(tokenAccount(id)).catch(() => {});
+    await secrets.delete(oauthAccount(id)).catch(() => {});
     for (const k of s.envKeys ?? []) await secrets.delete(envAccount(id, k)).catch(() => {});
     this.items.remove((x) => x.id === id);
     this.changed();
@@ -136,7 +180,7 @@ export class McpServers {
   /** Tools for a bot, from its enabled servers (connecting on first use). */
   async toolsFor(serverIds: string[]): Promise<ToolSpec[]> {
     const specs: ToolSpec[] = [];
-    for (const s of this.items.where((x) => x.enabled && serverIds.includes(x.id))) {
+    for (const s of this.forBot(serverIds)) {
       const rt = this.runtimeFor(s);
       if (!rt.tools) await this.test(s.id).catch(() => {});
       for (const t of rt.tools ?? []) {
@@ -152,7 +196,7 @@ export class McpServers {
 
   /** Runs a `<server>__<tool>` call for a bot; returns text for the model. */
   async call(serverIds: string[], name: string, rawArgs: string): Promise<{ result: string; activity: string } | null> {
-    const s = this.items.where((x) => x.enabled && serverIds.includes(x.id)).find((x) => name.startsWith(`${slug(x.name)}__`));
+    const s = this.forBot(serverIds).find((x) => name.startsWith(`${slug(x.name)}__`));
     if (!s) return null;
     const tool = name.slice(slug(s.name).length + 2);
     const rt = this.runtimeFor(s);
@@ -172,6 +216,71 @@ export class McpServers {
     }
   }
 
+  /** The servers a bot can use: the ones it switched on, plus "all bots" ones. */
+  private forBot(serverIds: string[]) {
+    return this.items.where((x) => x.enabled && (x.allBots || serverIds.includes(x.id))
+      && (x.auth !== "oauth" || !!secrets.get(oauthAccount(x.id))));
+  }
+
+  /**
+   * Starts signing in to an OAuth server: returns the page to open in the
+   * browser. When the user finishes, the tokens are saved and the tools listed.
+   */
+  async signIn(id: string): Promise<string> {
+    const s = this.get(id);
+    if (s.auth !== "oauth" || !s.url) throw new Error("This server doesn’t use a sign-in");
+    this.signIns.get(id)?.cancel();
+    const signIn = await startSignIn(s.url);
+    this.signIns.set(id, signIn);
+    this.changed();
+    signIn.done
+      .then(async (tokens) => {
+        await secrets.set(oauthAccount(id), JSON.stringify(tokens));
+        this.reset(id);
+        await this.test(id).catch(() => {});
+        if (s.connector) this.connected(s.connector);
+      })
+      .catch((err) => {
+        if (this.signIns.get(id) !== signIn) return;
+        const rt = this.runtimeFor(s);
+        this.fail(rt, err);
+      })
+      .finally(() => {
+        if (this.signIns.get(id) === signIn) this.signIns.delete(id);
+        this.changed();
+      });
+    return signIn.url;
+  }
+
+  /** OAuth tokens for a server, refreshed shortly before they expire. */
+  private tokenSource(id: string): TokenSource {
+    const load = (): OAuthTokens | undefined => {
+      const raw = secrets.get(oauthAccount(id));
+      try { return raw ? JSON.parse(raw) : undefined; } catch { return undefined; }
+    };
+    const renew = async () => {
+      const current = load();
+      if (!current?.refreshToken) return false;
+      try {
+        await secrets.set(oauthAccount(id), JSON.stringify(await refreshTokens(current)));
+        return true;
+      } catch {
+        // The sign-in is no longer valid: ask to connect again.
+        await secrets.delete(oauthAccount(id)).catch(() => {});
+        this.changed();
+        return false;
+      }
+    };
+    return {
+      get: async () => {
+        const t = load();
+        if (t?.expiresAt && t.expiresAt - 60_000 < Date.now()) await renew();
+        return load()?.accessToken;
+      },
+      refresh: renew,
+    };
+  }
+
   /** Stops every local server (shutdown, reset). */
   stopAll() {
     for (const id of this.runtime.keys()) this.reset(id);
@@ -185,7 +294,7 @@ export class McpServers {
     let rt = this.runtime.get(s.id);
     if (!rt) {
       const client = s.transport === "http"
-        ? new McpClient(s.url!, secrets.get(tokenAccount(s.id)), 90_000, s.name)
+        ? new McpClient(s.url!, s.auth === "oauth" ? this.tokenSource(s.id) : secrets.get(tokenAccount(s.id)), 90_000, s.name)
         : new StdioMcpClient(s.command!, s.args ?? [],
             Object.fromEntries((s.envKeys ?? []).map((k) => [k, secrets.get(envAccount(s.id, k)) ?? ""])));
       rt = { client, state: "idle", errors: [] };
@@ -224,6 +333,7 @@ function validate(config: McpServerConfig, input: McpServerInput): McpServerConf
   if (input.name !== undefined) next.name = String(input.name).trim();
   if (input.transport !== undefined) next.transport = input.transport;
   if (input.enabled !== undefined) next.enabled = !!input.enabled;
+  if (input.allBots !== undefined) next.allBots = !!input.allBots;
   if (input.url !== undefined) next.url = String(input.url).trim();
   if (input.command !== undefined) next.command = String(input.command).trim();
   if (input.args !== undefined) next.args = input.args.map(String);

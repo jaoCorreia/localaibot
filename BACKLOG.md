@@ -79,30 +79,18 @@ Memory tab to search, edit, pin, forget and delete.
 ## MCP servers
 
 Done (phase 1): HTTP and stdio servers in Settings → MCP Servers,
-secrets in the Keychain, tools prefixed by server, switched on per bot in its
-editor (Advanced), and a catalog of popular servers.
+secrets in the Keychain, tools prefixed by server, "Available to: all bots /
+some bots" on each server's page, and a catalog of popular servers.
 
-- **Discovery in the chat (next):** MCP is too technical to be the main way
-  in. When a task needs a service the bot doesn't have, it calls
-  `suggest_connection(service, why)` and the chat shows a card: "To do this I
-  need GitHub. [Connect]". No-auth servers connect in one click, token ones
-  ask for it in the card (Keychain), OAuth ones (Gmail, Drive) open the
-  browser. If the server already exists but isn't on for this bot: "Use
-  DeepWiki here? [Allow]". Once connected it's switched on for the bot and the
-  task continues. Options come from our catalog, later the MCP Registry.
+Done too: **Connectors** (Settings → Connectors): 15 apps with a one-click
+OAuth sign-in (MCP authorization: discovery, dynamic client registration,
+PKCE, loopback redirect, tokens in the Keychain, refresh), for all bots by
+default; and **discovery in the chat**: a bot that needs an app posts a
+Connect (or Allow) card and continues on its own once it's connected.
 
-Give bots tools from MCP servers, set up in Settings. Grok's connectors take
-only remote servers (URL + sign-in, no localhost); running on the Mac, we can
-also run local stdio servers, where the most useful ones live.
-
-- **Phase 1 — servers and tools:** `~/.local-bot/mcp.json` with HTTP servers
-  (reuse `hands/mcp.ts`'s client) and stdio servers the brain starts on demand
-  and restarts if they die; tokens and secret env vars in the Keychain.
-  Methods `mcp.list/add/update/remove/test/tools`. Tools join the agent loop
-  prefixed by server (`github__create_issue`), enabled per bot in the bot
-  editor (off by default). Settings → "MCP Servers": status dots, Add server
-  (Remote: URL + token; Local: command, args, env), page with discovered
-  tools, Test, Remove, recent errors.
+- **More connectors:** services that need Local Bot registered with them
+  first (GitHub, Asana, HubSpot, Box, Figma), and Google (Gmail, Drive,
+  Calendar) once there's an official MCP server or our own verified app.
 - **Phase 2 — safety and setup:** confirm write/destructive tools in the chat
   (Allow / Deny, "always allow" per tool; routines only use allowed ones);
   presets (Filesystem, GitHub, Fetch, Brave Search, Notion, Slack); OAuth for
