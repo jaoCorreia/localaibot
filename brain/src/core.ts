@@ -58,6 +58,30 @@ const cloud = new CloudLink((event, data) => emit(event, data), log);
 const deviceNames = new Collection<{ id: string; name: string }>("device-names.json");
 const named = <T extends { id: string; name: string }>(c: T): T => ({ ...c, name: deviceNames.get(c.id)?.name ?? c.name });
 
+/**
+ * Shows the device's name instead of "cua" in its desktop (the panel shows the
+ * user's full name). Best effort: needs the device running and passwordless
+ * sudo, which Local Bot's Linux devices have. Restarts the panel only on change.
+ */
+async function labelDevice(id: string) {
+  try {
+    const p = computerProvider(id);
+    const device = (await p.list()).find((c) => c.id === id);
+    if (!device || device.os !== "linux") return;
+    const name = named(device).name.replace(/[:\n]/g, " ").slice(0, 40);
+    const hands = await p.hands?.(id, "app");
+    if (!hands) return;
+    const q = `'${name.replace(/'/g, `'\\''`)}'`;
+    await hands.shell(
+      `[ "$(getent passwd "$(id -un)" | cut -d: -f5)" = ${q} ] || ` +
+      `{ sudo -n usermod -c ${q} "$(id -un)" && (DISPLAY=\${DISPLAY:-:1} setsid xfce4-panel -r >/dev/null 2>&1 &); }`,
+      20_000,
+    );
+  } catch (err) {
+    log("device label failed:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 /** A bot works on its own computer first, then on any computer it was granted. */
 const conversations = new Conversations(emit, async (bot) => {
   const view = bots.list().find((b) => b.id === bot.id);
@@ -156,6 +180,7 @@ export const methods: Record<string, Handler> = {
     computerProvider(id);
     deviceNames.upsert({ id, name: clean });
     emit("computers", null);
+    void labelDevice(id);
   },
   "computers.remove": async ({ id }) => {
     deviceNames.remove((d) => d.id === id);
@@ -175,12 +200,15 @@ export const methods: Record<string, Handler> = {
     const hands = await computerProvider(String(id)).hands?.(String(id), "app").catch(() => null);
     if (!hands) return;
     await hands.shell(hidden ? HIDE_POINTER : SHOW_POINTER, 15_000);
+    // Also when the screen is first shown: covers devices made before labels.
+    if (hidden) void labelDevice(String(id));
   },
   "computers.start": async ({ id }) => {
     const p = computerProvider(id);
     if (!p.start) throw new Error(`${p.name} devices are started by the app`);
     await p.start(id);
     emit("computers", null);
+    void labelDevice(id);
   },
   "computers.stop": async ({ id }) => {
     const p = computerProvider(id);
