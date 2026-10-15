@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Renders a bot reply as markdown: headings, lists and fenced code blocks, with
 /// inline styles (bold, italic, code, links) inside each block. Streaming text is
@@ -18,12 +19,9 @@ struct MarkdownText: View {
     private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case .paragraph(let text):
-            Text(inline(text))
-                .font(.system(size: 13))
-                .lineSpacing(3)
+            RichText(text: inline(text), size: 13)
         case .heading(let level, let text):
-            Text(inline(text))
-                .font(.system(size: level == 1 ? 17 : level == 2 ? 15 : 13, weight: .semibold))
+            RichText(text: inline(text), size: level == 1 ? 17 : level == 2 ? 15 : 13, weight: .semibold)
                 .padding(.top, 2)
         case .list(let items):
             VStack(alignment: .leading, spacing: 4) {
@@ -32,9 +30,7 @@ struct MarkdownText: View {
                         Text(item.marker)
                             .font(.system(size: 13).monospacedDigit())
                             .foregroundStyle(.secondary)
-                        Text(inline(item.text))
-                            .font(.system(size: 13))
-                            .lineSpacing(3)
+                        RichText(text: inline(item.text), size: 13)
                     }
                     .padding(.leading, CGFloat(item.indent) * 14)
                 }
@@ -51,9 +47,23 @@ struct MarkdownText: View {
     }
 
     private func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+        var attr = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)
+        // Bare URLs and domains ("example.com/page") become links too.
+        let plain = String(attr.characters)
+        let matches = Self.links?.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) ?? []
+        for match in matches {
+            guard let url = match.url, let r = Range(match.range, in: plain) else { continue }
+            let start = attr.index(attr.startIndex, offsetByCharacters: plain.distance(from: plain.startIndex, to: r.lowerBound))
+            let end = attr.index(start, offsetByCharacters: plain.distance(from: r.lowerBound, to: r.upperBound))
+            if attr[start..<end].runs.allSatisfy({ $0.link == nil && $0.inlinePresentationIntent?.contains(.code) != true }) {
+                attr[start..<end].link = url
+            }
+        }
+        return attr
     }
+
+    private static let links = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 }
 
 enum MarkdownBlock: Equatable {
@@ -125,5 +135,68 @@ enum MarkdownBlock: Equatable {
             }
         }
         return nil
+    }
+}
+
+/// Inline markdown drawn by AppKit: selectable, and links get the pointing-hand
+/// cursor and open in the browser (SwiftUI's Text can't change the cursor).
+struct RichText: NSViewRepresentable {
+    let text: AttributedString
+    var size: CGFloat
+    var weight: NSFont.Weight = .regular
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = true
+        view.isVerticallyResizable = false
+        view.linkTextAttributes = [
+            .foregroundColor: NSColor(Theme.link),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
+        ]
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        let rendered = attributed()
+        if view.textStorage?.isEqual(to: rendered) != true { view.textStorage?.setAttributedString(rendered) }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
+        guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
+        let width = max(proposal.width ?? 400, 20)
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        layout.ensureLayout(for: container)
+        let used = layout.usedRect(for: container)
+        // Short lines hug their text so a list marker sits right next to it.
+        return CGSize(width: proposal.width == nil ? ceil(used.width) : width, height: ceil(used.height))
+    }
+
+    private func attributed() -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        for run in text.runs {
+            let intent = run.inlinePresentationIntent ?? []
+            var font = intent.contains(.code)
+                ? NSFont.monospacedSystemFont(ofSize: size - 1, weight: weight)
+                : NSFont.systemFont(ofSize: size, weight: intent.contains(.stronglyEmphasized) ? .semibold : weight)
+            if intent.contains(.emphasized) {
+                font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.italic), size: size) ?? font
+            }
+            var attrs: [NSAttributedString.Key: Any] = [
+                .font: font, .foregroundColor: NSColor(Theme.text), .paragraphStyle: paragraph,
+            ]
+            if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            if intent.contains(.code) { attrs[.backgroundColor] = NSColor(Theme.raised) }
+            if let link = run.link { attrs[.link] = link }
+            out.append(NSAttributedString(string: String(text[run.range].characters), attributes: attrs))
+        }
+        return out
     }
 }

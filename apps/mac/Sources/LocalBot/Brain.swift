@@ -105,10 +105,20 @@ final class Brain: ObservableObject {
         var routine: RoutineRef?
         /// Set when another bot sent this prompt (ask_bot).
         var from: FromRef?
+        /// Files the bot shared (share_file).
+        var files: [Attachment]?
 
         struct FromRef: Decodable, Hashable { let botId: String; let name: String }
 
         struct RoutineRef: Decodable, Hashable { let id: String; let name: String }
+    }
+
+    /// Mirrors brain/src/chat/files.ts.
+    struct Attachment: Decodable, Identifiable, Hashable {
+        let id: String
+        let name: String
+        let size: Int
+        let mime: String
     }
 
     /// Mirrors brain/src/routines/schedule.ts.
@@ -263,7 +273,23 @@ final class Brain: ObservableObject {
         return (URL(fileURLWithPath: "/bin/zsh"), ["-lc", "exec node --import tsx src/index.ts"], brainDir)
     }
 
+    /// The running brain, for views that fetch shared files on their own.
+    static private(set) weak var shared: Brain?
+
+    /// A file a bot shared in the chat.
+    func fileData(botID: String, fileID: String) async -> Data? {
+        do {
+            let raw = try await call("chat.file", ["botId": botID, "fileId": fileID])
+            guard let b64 = (raw as? [String: Any])?["data"] as? String else { return nil }
+            return Data(base64Encoded: b64)
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     func start() {
+        Brain.shared = self
         guard process == nil else { return }
         let p = Process()
         let (exe, args, cwd) = launchCommand()
