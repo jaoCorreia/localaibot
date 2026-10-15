@@ -23,7 +23,8 @@ const MIME: Record<string, string> = {
   ".zip": "application/zip", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  ".mp4": "video/mp4", ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".aac": "audio/aac",
+  ".flac": "audio/flac", ".ogg": "audio/ogg", ".aiff": "audio/aiff",
 };
 
 export const mimeOf = (name: string) => MIME[extname(name).toLowerCase()] ?? "application/octet-stream";

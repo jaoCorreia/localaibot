@@ -301,7 +301,8 @@ final class Brain: ObservableObject {
         do {
             let raw = try await call("chat.file", ["botId": botID, "fileId": fileID])
             guard let b64 = (raw as? [String: Any])?["data"] as? String else { return nil }
-            return Data(base64Encoded: b64)
+            // Megabytes of base64: decode off the main thread.
+            return await Task.detached(priority: .userInitiated) { Data(base64Encoded: b64) }.value
         } catch {
             lastError = error.localizedDescription
             return nil
