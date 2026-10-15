@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UserNotifications
+import Combine
 
 /// The brain as a launchd agent, so routines run while Local Bot is closed.
 /// The agent runs the app's bundled Node and brain with `--service`; it waits
@@ -210,6 +211,19 @@ enum MenuBar {
     static let windowID = "main"
     /// Set when the app should really quit (menu bar Quit, update, log out).
     static var quitting = false
+    /// Opens a new main window (set by the window, from SwiftUI's openWindow).
+    static var openMainWindow: (() -> Void)?
+
+    /// Brings the window (and the Dock icon) back.
+    static func showWindow() {
+        NSApplication.shared.setActivationPolicy(.regular)
+        if let window = NSApplication.shared.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            openMainWindow?()
+        }
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
 
     static var keepsRunning: Bool { UserDefaults.standard.bool(forKey: key) && !quitting }
 
@@ -229,56 +243,203 @@ enum MenuBar {
     }
 }
 
-struct MenuBarLabel: View {
-    @ObservedObject var brain: Brain
-
-    var body: some View {
-        Image(systemName: brain.thinking.isEmpty ? "face.smiling" : "face.smiling.inverse")
-            .accessibilityLabel(brain.thinking.isEmpty ? "Local Bot" : "Local Bot · bots working")
-            // Opened at login without a window: the brain starts from here.
-            .task { brain.start() }
-    }
-}
-
+/// The menu bar panel: bots and what they're doing, the next routines, and
+/// the way back to the window.
 struct MenuBarMenu: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
-    @Environment(\.openWindow) private var openWindow
+    /// Closes the popover.
+    let close: () -> Void
+
+    private var working: Int { brain.bots.filter { brain.thinking.contains($0.id) }.count }
+
+    private static let face = Brain.Face(color: "sky", eyes: "dot", mouth: "smile", accessory: "none",
+                                         fill: "#4f9cf9", deep: "#08245c", shape: "round")
+
+    private var upcoming: [Brain.Routine] {
+        brain.routines
+            .filter { $0.enabled && $0.nextRunAt != nil }
+            .sorted { ($0.nextRunAt ?? "") < ($1.nextRunAt ?? "") }
+            .prefix(3).map { $0 }
+    }
 
     var body: some View {
-        let working = brain.bots.filter { brain.thinking.contains($0.id) }
-        Text(working.isEmpty ? "No bots working" : "\(working.count) bot\(working.count == 1 ? "" : "s") working")
-        if !brain.bots.isEmpty {
-            Divider()
-            ForEach(brain.bots) { bot in
-                Button {
-                    model.selection = .bot(bot.id)
-                    open()
-                } label: {
-                    Text(brain.thinking.contains(bot.id) ? "\(bot.name) — working" : bot.name)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Rectangle().fill(Theme.border).frame(height: 1)
+            if brain.bots.isEmpty {
+                Text("No bots yet").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 18)
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(brain.bots) { bot in
+                        PanelRow(action: { open(bot: bot.id) }) {
+                            AnimatedFace(face: bot.face, size: 24, working: brain.thinking.contains(bot.id), seed: bot.id)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(bot.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                Text(status(bot)).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            if brain.thinking.contains(bot.id) {
+                                Circle().fill(Theme.live).frame(width: 6, height: 6)
+                            }
+                        }
+                    }
                 }
+                .padding(6)
+            }
+            if !upcoming.isEmpty {
+                Rectangle().fill(Theme.border).frame(height: 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("NEXT ROUTINES").font(.system(size: 10, weight: .semibold)).kerning(0.6).foregroundStyle(Theme.tertiary)
+                    ForEach(upcoming) { r in
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                            Text(r.name).font(.system(size: 12)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text(Self.when(r.nextRunAt)).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+            }
+            Rectangle().fill(Theme.border).frame(height: 1)
+            HStack {
+                Label("Routines keep running in the background", systemImage: "moon.zzz")
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary).lineLimit(1)
+                Spacer(minLength: 6)
+                Button("Quit") {
+                    MenuBar.quitting = true
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+        }
+        .frame(width: 320)
+        // No background of its own: the popover's material, so it matches the arrow.
+        .foregroundStyle(Theme.text)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            // Local Bot's own face, without the app icon's tile.
+            AnimatedFace(face: Self.face, size: 28, working: working > 0, seed: "local-bot")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Local Bot").font(.system(size: 13, weight: .semibold))
+                Text(!brain.connected ? "Starting…" : working == 0 ? "All bots idle" : "\(working) bot\(working == 1 ? "" : "s") working")
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
+            Spacer()
+            IconButton(systemImage: "macwindow", help: "Open Local Bot") { open() }
+            IconButton(systemImage: "gearshape", help: "Settings") {
+                model.sheet = .settings
+                open()
             }
         }
-        Divider()
-        Button("Open Local Bot") { open() }
-        Button("Settings…") {
-            model.sheet = .settings
-            open()
+        .padding(.horizontal, 14).padding(.vertical, 12)
+    }
+
+    private func status(_ bot: Brain.Bot) -> String {
+        let device = bot.workDevice.flatMap { id in brain.computers.first { $0.id == id }?.name }
+        let doing = brain.thinking.contains(bot.id) ? "Working…" : (bot.role.isEmpty ? "Idle" : bot.role)
+        return [doing, device].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private static func when(_ iso: String?) -> String {
+        guard let iso, let d = ISO8601DateFormatter.withFractions.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return "" }
+        if Calendar.current.isDateInToday(d) { return d.formatted(date: .omitted, time: .shortened) }
+        return d.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+
+    private func open(bot: String? = nil) {
+        if let bot { model.selection = .bot(bot) }
+        close()
+        MenuBar.showWindow()
+    }
+}
+
+/// A full-width hover row in the menu bar panel.
+private struct PanelRow<Content: View>: View {
+    let action: () -> Void
+    @ViewBuilder let content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) { content }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Theme.raised : .clear))
+                .contentShape(Rectangle())
         }
-        Divider()
-        Button("Quit Local Bot") {
-            MenuBar.quitting = true
-            NSApplication.shared.terminate(nil)
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The menu bar icon and its popover (centered under the icon, with the arrow,
+/// like system extras). Shown while the background mode is on.
+@MainActor
+final class StatusBar: NSObject {
+    static let shared = StatusBar()
+    private var item: NSStatusItem?
+    private let popover = NSPopover()
+    private var bag: Set<AnyCancellable> = []
+    private weak var model: AppModel?
+
+    func setUp(model: AppModel) {
+        guard self.model == nil else { return }
+        self.model = model
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentViewController = NSHostingController(rootView: MenuBarMenu(model: model, brain: model.brain) { [weak self] in
+            self?.popover.performClose(nil)
+        })
+        // The brain starts here too when the app opens at login without a window.
+        model.brain.start()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.sync() }
+            .store(in: &bag)
+        model.brain.$thinking
+            .receive(on: RunLoop.main)
+            .sink { [weak self] thinking in self?.updateIcon(working: !thinking.isEmpty) }
+            .store(in: &bag)
+        sync()
+    }
+
+    /// Adds or removes the icon to match Settings → Background.
+    private func sync() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: MenuBar.key) == nil { defaults.set(BackgroundService.installed, forKey: MenuBar.key) }
+        let wanted = defaults.bool(forKey: MenuBar.key)
+        if wanted, item == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.target = self
+            item.button?.action = #selector(toggle)
+            self.item = item
+            updateIcon(working: !(model?.brain.thinking.isEmpty ?? true))
+        } else if !wanted, let item {
+            popover.performClose(nil)
+            NSStatusBar.system.removeStatusItem(item)
+            self.item = nil
         }
     }
 
-    private func open() {
-        NSApplication.shared.setActivationPolicy(.regular)
-        if let window = NSApplication.shared.windows.first(where: { $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
+    private func updateIcon(working: Bool) {
+        let image = NSImage(systemSymbolName: working ? "face.smiling.inverse" : "face.smiling",
+                            accessibilityDescription: working ? "Local Bot · bots working" : "Local Bot")
+        image?.isTemplate = true
+        item?.button?.image = image
+    }
+
+    @objc private func toggle() {
+        guard let button = item?.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
         } else {
-            openWindow(id: MenuBar.windowID)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
         }
-        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 }

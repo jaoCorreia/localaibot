@@ -5,9 +5,7 @@ import AppKit
 struct LocalBotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     /// Shared by the window and the menu bar icon.
-    @StateObject private var model = AppModel()
-    /// On with the background service: the app lives in the menu bar too.
-    @AppStorage(MenuBar.key) private var inMenuBar = BackgroundService.installed
+    @ObservedObject private var model = AppModel.shared
 
     init() {
         // Launched by the background service just to post a notification.
@@ -32,11 +30,6 @@ struct LocalBotApp: App {
             }
         }
 
-        MenuBarExtra(isInserted: $inMenuBar) {
-            MenuBarMenu(model: model, brain: model.brain)
-        } label: {
-            MenuBarLabel(brain: model.brain)
-        }
     }
 }
 
@@ -48,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { _ in
             MenuBar.quitting = true
         }
+        Task { @MainActor in StatusBar.shared.setUp(model: AppModel.shared) }
         // Opened at login: start in the menu bar, without a window.
         if CommandLine.arguments.contains("--background") {
             DispatchQueue.main.async { MenuBar.hide() }
@@ -108,6 +102,7 @@ enum Sheet: Identifiable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let shared = AppModel()
     let brain = Brain()
     let updater = Updater.shared
     @Published var selection: Selection?
@@ -152,6 +147,7 @@ struct ContentView: View {
 struct MainView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var brain: Brain
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 248
     @AppStorage("chatWidth") private var chatWidth: Double = 380
 
@@ -181,6 +177,8 @@ struct MainView: View {
         .foregroundStyle(Theme.text)
         .tint(Theme.text)
         .onAppear {
+            // The menu bar can reopen the window after it was closed.
+            MenuBar.openMainWindow = { [openWindow] in openWindow(id: MenuBar.windowID) }
             brain.start()
             Notifier.shared.setUp()
             Notifier.shared.openBot = { id in model.selection = .bot(id) }
