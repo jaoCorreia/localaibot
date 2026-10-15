@@ -163,7 +163,7 @@ struct ConnectAIStep: View {
                             result = nil
                         } label: {
                             VStack(spacing: 6) {
-                                Image(systemName: presetSymbol(p.id)).font(.system(size: 14))
+                                SymbolIcon(name: presetSymbol(p.id), size: 14)
                                 Text(p.label).font(.system(size: 11, weight: .medium)).lineLimit(1)
                                 if p.id == "openrouter" {
                                     Text("Recommended").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.live)

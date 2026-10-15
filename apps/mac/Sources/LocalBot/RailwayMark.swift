@@ -55,6 +55,9 @@ struct SymbolIcon: View {
     var body: some View {
         if name == "railway" {
             RailwayMark().frame(width: size * 1.15, height: size * 1.15)
+        } else if name.hasPrefix("logo."), let logo = ProviderLogos.image(String(name.dropFirst(5))) {
+            Image(nsImage: logo).renderingMode(.template).resizable().scaledToFit()
+                .frame(width: size * 1.2, height: size * 1.2)
         } else {
             Image(systemName: name).font(.system(size: size))
         }
