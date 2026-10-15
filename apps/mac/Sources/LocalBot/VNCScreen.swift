@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AppKit
 
 /// Shows a computer's screen over VNC using the noVNC page the computer serves.
 /// `controlling == false` is view-only: the page swallows input before noVNC
@@ -55,6 +56,9 @@ struct VNCScreen: NSViewRepresentable {
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(reconnect)
+        config.userContentController.addUserScript(WKUserScript(source: Self.keyboardBridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        config.userContentController.add(context.coordinator, name: "localbotClipboard")
+        config.userContentController.add(context.coordinator, name: "localbotPaste")
         let view = WKWebView(frame: .zero, configuration: config)
         view.uiDelegate = context.coordinator
         view.navigationDelegate = context.coordinator
@@ -87,10 +91,85 @@ struct VNCScreen: NSViewRepresentable {
         return parts.url
     }
 
-    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate {
+    /// Mac shortcuts and clipboard while controlling a Linux device.
+    /// - ⌘ + key goes to the device as Ctrl + key (copy, paste, select all, undo,
+    ///   new tab…), except the ones macOS keeps (⌘Q, ⌘H, ⌘M, ⌘Tab).
+    /// - The device's clipboard comes to the Mac when it changes (VNC cut text),
+    ///   and ⌘V sends the Mac's clipboard to the device before pasting.
+    /// noVNC keeps its RFB object private, so it's caught on its first event.
+    private static let keyboardBridge = """
+    (() => {
+      const hook = document.createElement('script');
+      hook.type = 'module';
+      hook.textContent = `
+        import RFB from './core/rfb.js';
+        const original = RFB.prototype.dispatchEvent;
+        RFB.prototype.dispatchEvent = function (event) {
+          if (!window.__lbRFB) {
+            window.__lbRFB = this;
+            this.addEventListener('clipboard', (e) =>
+              window.webkit.messageHandlers.localbotClipboard.postMessage(e.detail.text || ''));
+          }
+          return original.call(this, event);
+        };`;
+      document.documentElement.appendChild(hook);
+
+      const CTRL = 0xffe3;
+      const ctrlKey = (key, code) => {
+        const rfb = window.__lbRFB;
+        if (!rfb) return;
+        const sym = key.length === 1 ? key.toLowerCase().charCodeAt(0) : null;
+        if (sym === null) return;
+        rfb.sendKey(CTRL, 'ControlLeft', true);
+        rfb.sendKey(sym, code, true);
+        rfb.sendKey(sym, code, false);
+        rfb.sendKey(CTRL, 'ControlLeft', false);
+      };
+      window.__lbPaste = (text) => {
+        const rfb = window.__lbRFB;
+        if (!rfb) return;
+        if (text) rfb.clipboardPasteFrom(text);
+        // Let the device take the new clipboard before pasting it.
+        setTimeout(() => ctrlKey('v', 'KeyV'), 60);
+      };
+      const macOnly = new Set(['q', 'h', 'm', 'tab', '`']);
+      window.addEventListener('keydown', (e) => {
+        if (window.__localbotViewOnly) return;
+        if (e.key === 'Meta') { e.stopImmediatePropagation(); e.preventDefault(); return; }
+        if (!e.metaKey || e.ctrlKey || macOnly.has(e.key.toLowerCase())) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        if (e.key.toLowerCase() === 'v') window.webkit.messageHandlers.localbotPaste.postMessage('');
+        else ctrlKey(e.key, e.code);
+      }, { capture: true });
+      window.addEventListener('keyup', (e) => {
+        if (window.__localbotViewOnly) return;
+        if (e.key === 'Meta' || e.metaKey) { e.stopImmediatePropagation(); e.preventDefault(); }
+      }, { capture: true });
+    })();
+    """
+
+    final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
         var password: String?
         var loaded: URL?
         var controlling: Bool?
+
+        /// The device copied something: put it on the Mac's clipboard. ⌘V: hand
+        /// the Mac's clipboard to the device and paste.
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            switch message.name {
+            case "localbotClipboard":
+                guard let text = message.body as? String, !text.isEmpty else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            case "localbotPaste":
+                let text = NSPasteboard.general.string(forType: .string) ?? ""
+                let json = (try? JSONSerialization.data(withJSONObject: [text])).flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
+                message.webView?.evaluateJavaScript("window.__lbPaste(\(json)[0])")
+            default:
+                break
+            }
+        }
 
         /// noVNC asks for the password with window.prompt(); answer it here so the
         /// secret never goes in the URL.
