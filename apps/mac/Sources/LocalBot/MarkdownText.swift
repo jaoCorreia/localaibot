@@ -26,11 +26,14 @@ struct MarkdownText: View {
         case .list(let items):
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // Top-aligned: the AppKit text has no baseline SwiftUI can align to.
+                    HStack(alignment: .top, spacing: 6) {
                         Text(item.marker)
                             .font(.system(size: 13).monospacedDigit())
                             .foregroundStyle(.secondary)
                         RichText(text: inline(item.text), size: 13)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .layoutPriority(1)
                     }
                     .padding(.leading, CGFloat(item.indent) * 14)
                 }
@@ -169,12 +172,13 @@ struct RichText: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
         guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
-        let width = max(proposal.width ?? 400, 20)
+        // No width, or "as wide as you like": lay out on one line and hug it.
+        let given = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        let width = max(given ?? .greatestFiniteMagnitude, 20)
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        // Short lines hug their text so a list marker sits right next to it.
-        return CGSize(width: proposal.width == nil ? ceil(used.width) : width, height: ceil(used.height))
+        return CGSize(width: given ?? ceil(used.width), height: ceil(used.height))
     }
 
     private func attributed() -> NSAttributedString {
