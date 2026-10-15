@@ -13,6 +13,8 @@ export interface Bot {
   createdAt: string;
   /** Learn from finished tasks in the background (default on). */
   memoryAuto?: boolean;
+  /** MCP servers whose tools this bot may use (Settings → MCP Servers). */
+  mcpServers?: string[];
 }
 
 /**
@@ -66,8 +68,9 @@ export class Bots {
     return this.view(bot);
   }
 
-  update(id: string, patch: Partial<Pick<Bot, "name" | "role" | "instructions" | "provider" | "model" | "avatarSeed" | "memoryAuto">>): BotView {
+  update(id: string, patch: Partial<Pick<Bot, "name" | "role" | "instructions" | "provider" | "model" | "avatarSeed" | "memoryAuto" | "mcpServers">>): BotView {
     const bot = { ...this.get(id), ...patch };
+    if (bot.mcpServers) bot.mcpServers = [...new Set(bot.mcpServers.map(String))];
     if (!bot.name.trim()) throw new Error("The bot needs a name");
     this.bots.upsert(bot);
     return this.view(bot);

@@ -10,7 +10,7 @@ export class McpClient {
   private initialized?: Promise<void>;
   private nextId = 1;
 
-  constructor(private url: string, private token?: string, private timeoutMs = 90_000) {}
+  constructor(private url: string, private token?: string, private timeoutMs = 90_000, private who = "The device") {}
 
   /** Calls a tool and returns its result (content, structuredContent, isError). */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
@@ -18,7 +18,7 @@ export class McpClient {
     return this.request("tools/call", { name, arguments: args }, timeoutMs);
   }
 
-  async listTools(): Promise<{ name: string }[]> {
+  async listTools(): Promise<{ name: string; description?: string; inputSchema?: Record<string, unknown> }[]> {
     await this.initialize();
     return (await this.request("tools/list", {})).tools ?? [];
   }
@@ -58,9 +58,9 @@ export class McpClient {
       signal: AbortSignal.timeout(timeoutMs),
     });
     this.sessionId = res.headers.get("mcp-session-id") ?? this.sessionId;
-    if (res.status === 401 || res.status === 403) throw new Error("The device refused the token");
+    if (res.status === 401 || res.status === 403) throw new Error(`${this.who} refused the token`);
     if (res.status === 202) return undefined;
-    if (!res.ok) throw new Error(`Device answered HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${this.who} answered HTTP ${res.status}`);
     const body = await res.text();
     if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) return body ? JSON.parse(body) : undefined;
     // SSE: the reply is the last `data:` event that carries an id.

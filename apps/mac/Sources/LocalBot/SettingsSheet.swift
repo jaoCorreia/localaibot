@@ -16,6 +16,8 @@ struct SettingsSheet: View {
         case addProvider
         case provider(String)
         case deviceAccount(String)
+        case addMcp
+        case mcp(String)
     }
 
     @State private var page: Page = .appearance
@@ -29,6 +31,7 @@ struct SettingsSheet: View {
             ScrollView {
                 detail
                     .padding(.horizontal, 32).padding(.top, 28).padding(.bottom, 32)
+                    .thinScrollers()
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .scrollIndicators(.never)
@@ -51,8 +54,11 @@ struct SettingsSheet: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Settings").font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 12).padding(.top, 24).padding(.bottom, 18)
+                .padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 18)
 
+            // The lists scroll; the version and update check stay at the bottom.
+            ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
             SidebarGroup("General") {
                 SidebarItem(icon: "circle.lefthalf.filled", title: "Appearance", selected: page == .appearance) { page = .appearance }
                 SidebarItem(icon: "sparkles", title: "Default model", selected: page == .defaults) { page = .defaults }
@@ -70,6 +76,14 @@ struct SettingsSheet: View {
                 SidebarItem(icon: "plus", title: "Add provider", muted: true, selected: page == .addProvider) { page = .addProvider }
             }
 
+            SidebarGroup("MCP Servers") {
+                ForEach(brain.mcpServers) { s in
+                    SidebarItem(icon: s.isRemote ? "globe" : "terminal", title: s.name,
+                                dot: s.stateColor, selected: page == .mcp(s.id)) { page = .mcp(s.id) }
+                }
+                SidebarItem(icon: "plus", title: "Add server", muted: true, selected: page == .addMcp) { page = .addMcp }
+            }
+
             SidebarGroup("Device Providers") {
                 ForEach(brain.deviceAccounts) { a in
                     SidebarItem(icon: a.id == "railway" ? "railway" : "cloud", title: a.label,
@@ -77,23 +91,30 @@ struct SettingsSheet: View {
                                 selected: page == .deviceAccount(a.id)) { page = .deviceAccount(a.id) }
                 }
             }
-            Spacer()
-            VStack(alignment: .leading, spacing: 6) {
-                if Updater.shared.enabled {
-                    Button { Updater.shared.checkForUpdates() } label: {
-                        Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.secondary)
-                }
-                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                    .textSelection(.enabled)
             }
-            .padding(.leading, 12).padding(.bottom, 14)
+            .padding(.horizontal, 8).padding(.bottom, 12)
+            .thinScrollers()
+            }
+
+            Rectangle().fill(Theme.border).frame(height: 1)
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Local Bot").font(.system(size: 12, weight: .medium))
+                    Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                        .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 0)
+                if Updater.shared.enabled {
+                    PillButton(title: "Check for updates", systemImage: "arrow.triangle.2.circlepath") {
+                        Updater.shared.checkForUpdates()
+                    }
+                    .environment(\.compactPills, true)
+                    .help("Check for updates")
+                }
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
         }
-        .padding(.horizontal, 8)
     }
 
     // MARK: Detail
@@ -110,6 +131,13 @@ struct SettingsSheet: View {
             DefaultsPage(brain: brain)
         case .addProvider:
             AddProviderPage(brain: brain) { id in page = .provider(id) }
+        case .addMcp:
+            AddMcpServerPage(brain: brain) { id in page = .mcp(id) }
+        case .mcp(let id):
+            if let server = brain.mcpServers.first(where: { $0.id == id }) {
+                McpServerPage(brain: brain, server: server) { page = .addMcp }
+                    .id(server.id)
+            }
         case .provider(let id):
             if let entry = status?.entry(id) {
                 ProviderPage(brain: brain, preset: status?.preset(entry.preset), entry: entry) { page = .addProvider }

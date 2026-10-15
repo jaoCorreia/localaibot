@@ -49,16 +49,23 @@ struct BotEditor: View {
             }
             .padding(.bottom, 22)
 
-            VStack(alignment: .leading, spacing: 14) {
-                Field(label: "Name", text: $draft.name, placeholder: "e.g. Sales, Researcher, Support")
-                Field(label: "Role", text: $draft.role, placeholder: "e.g. B2B lead prospecting")
-                Field(label: "Instructions", text: $draft.instructions,
-                      placeholder: "How it should work, tone, rules, what never to do…", axis: .vertical)
-                ProviderModelPicker(brain: brain, provider: $draft.provider, model: $draft.model)
-                ComputerPicker(brain: brain, selection: $draft.computerId)
+            // The fields scroll when they don't fit (many MCP servers); the
+            // header and the buttons stay put.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Field(label: "Name", text: $draft.name, placeholder: "e.g. Sales, Researcher, Support")
+                    Field(label: "Role", text: $draft.role, placeholder: "e.g. B2B lead prospecting")
+                    Field(label: "Instructions", text: $draft.instructions,
+                          placeholder: "How it should work, tone, rules, what never to do…", axis: .vertical)
+                    ProviderModelPicker(brain: brain, provider: $draft.provider, model: $draft.model)
+                    ComputerPicker(brain: brain, selection: $draft.computerId)
+                    McpServerToggles(brain: brain, selection: $draft.mcpServers)
+                }
+                .padding(.horizontal, 2).padding(.bottom, 4)
+                .thinScrollers()
             }
-
-            Spacer(minLength: 22)
+            .scrollBounceBehavior(.basedOnSize)
+            .padding(.bottom, 18)
 
             HStack {
                 if bot != nil {
@@ -92,7 +99,8 @@ struct BotEditor: View {
     private func load() async {
         if let bot {
             draft = .init(name: bot.name, role: bot.role, instructions: bot.instructions, provider: bot.provider,
-                          model: bot.model, computerId: bot.ownedComputer, avatarSeed: bot.avatarSeed)
+                          model: bot.model, computerId: bot.ownedComputer, avatarSeed: bot.avatarSeed,
+                          mcpServers: bot.mcpServers ?? [])
             avatar = bot.avatar
             // The saved face right away, so the preview doesn't change shape while options load.
             face = bot.face

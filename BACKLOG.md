@@ -78,6 +78,19 @@ Memory tab to search, edit, pin, forget and delete.
 
 ## MCP servers
 
+Done (phase 1): HTTP and stdio servers in Settings → MCP Servers,
+secrets in the Keychain, tools prefixed by server, switched on per bot in its
+editor (Advanced), and a catalog of popular servers.
+
+- **Discovery in the chat (next):** MCP is too technical to be the main way
+  in. When a task needs a service the bot doesn't have, it calls
+  `suggest_connection(service, why)` and the chat shows a card: "To do this I
+  need GitHub. [Connect]". No-auth servers connect in one click, token ones
+  ask for it in the card (Keychain), OAuth ones (Gmail, Drive) open the
+  browser. If the server already exists but isn't on for this bot: "Use
+  DeepWiki here? [Allow]". Once connected it's switched on for the bot and the
+  task continues. Options come from our catalog, later the MCP Registry.
+
 Give bots tools from MCP servers, set up in Settings. Grok's connectors take
 only remote servers (URL + sign-in, no localhost); running on the Mac, we can
 also run local stdio servers, where the most useful ones live.

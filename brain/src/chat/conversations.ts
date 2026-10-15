@@ -3,6 +3,7 @@ import { Collection } from "../store.ts";
 import type { Bot } from "../bots/bots.ts";
 import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, SHARE_FILE_TOOL, runTool } from "../agent/tools.ts";
 import { FileStore, readDeviceFile, type Attachment } from "./files.ts";
+import type { McpServers } from "../mcp/servers.ts";
 import type { Routines } from "../routines/routines.ts";
 import { MEMORY_TOOLS, VERBATIM_MESSAGES, type MemoryService } from "../memory/memory.ts";
 import type { Hands } from "../hands/types.ts";
@@ -67,6 +68,7 @@ export class Conversations {
 
   private routines?: Routines;
   private memory?: MemoryService;
+  private mcp?: McpServers;
 
   constructor(
     private emit: Emit,
@@ -84,6 +86,11 @@ export class Conversations {
 
   attachMemory(memory: MemoryService) {
     this.memory = memory;
+  }
+
+  /** Tools from MCP servers, for bots that have them switched on. */
+  attachMcp(mcp: McpServers) {
+    this.mcp = mcp;
   }
 
   history(botId: string) {
@@ -161,7 +168,9 @@ export class Conversations {
     const teammates = chain.length <= MAX_DELEGATION_HOPS ? this.teammates(chain) : [];
     // A routine run may look at routines but not create more (no runaway chains).
     const routineTools = !this.routines ? [] : inRoutine ? ROUTINE_TOOLS.filter((t) => t.name === "list_routines") : ROUTINE_TOOLS;
-    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : []), ...routineTools, ...(this.memory ? MEMORY_TOOLS : [])];
+    const servers = bot.mcpServers ?? [];
+    const mcpTools = this.mcp && servers.length ? await this.mcp.toolsFor(servers) : [];
+    const tools = [...(teammates.length ? [ASK_BOT_TOOL] : []), ...routineTools, ...(this.memory ? MEMORY_TOOLS : []), ...mcpTools];
     let lastReply: string | undefined;
     let place: Workplace | null = null;
     try {
@@ -246,6 +255,14 @@ export class Conversations {
           content = await this.delegate(bot, chain, call.function.arguments, signal);
           transcript.push({ role: "tool", tool_call_id: call.id, content });
           continue;
+        }
+        if (this.mcp && mcpTools.some((t) => t.name === call.function.name)) {
+          const out = await this.mcp.call(servers, call.function.name, call.function.arguments);
+          if (out) {
+            this.activity(bot, out.activity);
+            transcript.push({ role: "tool", tool_call_id: call.id, content: out.result });
+            continue;
+          }
         }
         if (!place) {
           transcript.push({ role: "tool", tool_call_id: call.id, content: "Error: you have no device to do that." });
