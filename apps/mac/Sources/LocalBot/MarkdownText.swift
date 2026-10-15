@@ -171,14 +171,13 @@ struct RichText: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
-        guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
-        // No width, or "as wide as you like": lay out on one line and hug it.
+        // Measured on a copy: SwiftUI probes odd widths (even 0) while laying
+        // out, and setting them on the live text view left it stuck that narrow.
+        let text = view.textStorage.map { NSAttributedString(attributedString: $0) } ?? attributed()
         let given = proposal.width.flatMap { $0.isFinite ? $0 : nil }
-        let width = max(given ?? .greatestFiniteMagnitude, 20)
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
-        let used = layout.usedRect(for: container)
-        return CGSize(width: given ?? ceil(used.width), height: ceil(used.height))
+        let bounds = text.boundingRect(with: NSSize(width: max(given ?? .greatestFiniteMagnitude, 1), height: .greatestFiniteMagnitude),
+                                       options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return CGSize(width: given ?? ceil(bounds.width), height: ceil(bounds.height))
     }
 
     private func attributed() -> NSAttributedString {
