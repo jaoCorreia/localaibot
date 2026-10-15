@@ -74,3 +74,24 @@ Memory tab to search, edit, pin, forget and delete.
   contradictions across all of a bot's memories ("sleep-time" pass).
 - **Memory evals:** a small LongMemEval/LoCoMo-style check on our own chats.
 - **Refresh other bots' Memory tabs** when a team memory changes.
+
+## MCP servers
+
+Give bots tools from MCP servers, set up in Settings. Grok's connectors take
+only remote servers (URL + sign-in, no localhost); running on the Mac, we can
+also run local stdio servers, where the most useful ones live.
+
+- **Phase 1 — servers and tools:** `~/.local-bot/mcp.json` with HTTP servers
+  (reuse `hands/mcp.ts`'s client) and stdio servers the brain starts on demand
+  and restarts if they die; tokens and secret env vars in the Keychain.
+  Methods `mcp.list/add/update/remove/test/tools`. Tools join the agent loop
+  prefixed by server (`github__create_issue`), enabled per bot in the bot
+  editor (off by default). Settings → "MCP Servers": status dots, Add server
+  (Remote: URL + token; Local: command, args, env), page with discovered
+  tools, Test, Remove, recent errors.
+- **Phase 2 — safety and setup:** confirm write/destructive tools in the chat
+  (Allow / Deny, "always allow" per tool; routines only use allowed ones);
+  presets (Filesystem, GitHub, Fetch, Brave Search, Notion, Slack); OAuth for
+  remote servers.
+- **Phase 3 — cloud:** remote servers move with a bot to the cloud brain;
+  local ones stay on the Mac and the app says so.
