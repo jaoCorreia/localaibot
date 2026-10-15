@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Collection } from "../store.ts";
 import type { Bot } from "../bots/bots.ts";
-import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, runTool } from "../agent/tools.ts";
+import { ASK_BOT_TOOL, COMPUTER_TOOLS, ROUTINE_TOOLS, SHARE_FILE_TOOL, runTool } from "../agent/tools.ts";
+import { FileStore, readDeviceFile, type Attachment } from "./files.ts";
 import type { Routines } from "../routines/routines.ts";
 import { MEMORY_TOOLS, VERBATIM_MESSAGES, type MemoryService } from "../memory/memory.ts";
 import type { Hands } from "../hands/types.ts";
@@ -24,6 +25,8 @@ export interface Message {
   routine?: { id: string; name: string };
   /** Set on a prompt another bot sent through ask_bot. */
   from?: { botId: string; name: string };
+  /** Files the bot handed over (share_file), downloadable from the chat. */
+  files?: Attachment[];
 }
 
 export interface Workplace {
@@ -71,6 +74,7 @@ export class Conversations {
     private team: Team = () => [],
     /** Which model client a bot talks to; injectable so tests can use a scripted fake. */
     private chatWith: (bot: Bot) => ChatProvider = (bot) => provider(bot.provider),
+    readonly files = new FileStore(),
   ) {}
 
   /** Routines are built on top of conversations, so they're attached afterwards. */
@@ -100,11 +104,13 @@ export class Conversations {
   reset() {
     for (const [, run] of this.running) run.abort();
     this.messages.remove(() => true);
+    this.files.clearAll();
   }
 
   clear(botId: string) {
     this.stop(botId);
     this.messages.remove((m) => m.botId === botId);
+    this.files.clear(botId);
     // Clearing the chat drops its summary too; long-term memories stay.
     this.memory?.store.clearChatSummary(botId);
   }
@@ -192,7 +198,7 @@ export class Conversations {
         result = await this.chatWith(bot).chat({
           model: bot.model,
           messages: transcript,
-          tools: place ? [...COMPUTER_TOOLS, ...tools] : tools.length ? tools : undefined,
+          tools: place ? [...COMPUTER_TOOLS, SHARE_FILE_TOOL, ...tools] : tools.length ? tools : undefined,
           signal,
           onDelta: (delta) => {
             reply.text += delta;
@@ -243,6 +249,11 @@ export class Conversations {
         }
         if (!place) {
           transcript.push({ role: "tool", tool_call_id: call.id, content: "Error: you have no device to do that." });
+          continue;
+        }
+        if (call.function.name === SHARE_FILE_TOOL.name) {
+          content = await this.shareFiles(bot, place.hands, call.function.arguments);
+          transcript.push({ role: "tool", tool_call_id: call.id, content });
           continue;
         }
         try {
@@ -429,6 +440,39 @@ export class Conversations {
     };
   }
 
+  /** Copies files off the device and posts them in the chat as one message. */
+  private async shareFiles(bot: Bot, hands: Hands, rawArgs: string): Promise<string> {
+    let paths: string[];
+    try {
+      paths = (JSON.parse(rawArgs || "{}").paths ?? []).map(String).filter(Boolean).slice(0, 10);
+    } catch {
+      return "Error: invalid arguments.";
+    }
+    if (!paths.length) return "Error: give the absolute paths of the files.";
+    const shared: Attachment[] = [];
+    const problems: string[] = [];
+    for (const path of paths) {
+      try {
+        shared.push(this.files.save(bot.id, path.split("/").pop() || "file", await readDeviceFile(hands, path)));
+      } catch (err) {
+        problems.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+    if (shared.length) this.emit("message", this.add({ botId: bot.id, role: "assistant", text: "", files: shared }));
+    for (const p of problems) this.failure(bot, "Couldn’t share a file", new Error(p));
+    return [
+      shared.length && `Shared with the user: ${shared.map((f) => f.name).join(", ")}. They can download them from the chat.`,
+      ...problems.map((p) => `Error: ${p}`),
+    ].filter(Boolean).join("\n");
+  }
+
+  /** A shared file's contents, for the app to save or preview. */
+  readFile(botId: string, fileId: string) {
+    const file = this.history(botId).flatMap((m) => m.files ?? []).find((f) => f.id === fileId);
+    if (!file) throw new Error("That file is no longer in the chat");
+    return { ...file, data: this.files.read(botId, file).toString("base64") };
+  }
+
   private system(bot: Bot, place: Workplace | null, teammates: Bot[]) {
     return [
       `You are ${bot.name}, a bot in Local Bot.`,
@@ -444,6 +488,7 @@ export class Conversations {
             "- Prefer keyboard shortcuts (ctrl+l for the address bar, Return to confirm).",
             "- To open websites, use open_app with firefox-esr and the URL.",
             "- After every action you get a fresh screenshot; check the result before moving on.",
+            "- When you create or download a file the user wants (report, PDF, spreadsheet, image), send it with share_file so they can download it; don't just say where it is on the device.",
             "- Never make purchases, send messages or delete things irreversibly without asking the user first.",
             "- When you are done, reply to the user with a short summary of what you did.",
           ].join("\n")
@@ -463,11 +508,13 @@ export class Conversations {
 
   private past(bot: Bot): ChatMessage[] {
     return this.history(bot.id)
-      .filter((m) => (m.role === "user" || m.role === "assistant") && !m.error && m.text)
+      .filter((m) => (m.role === "user" || m.role === "assistant") && !m.error && (m.text || m.files?.length))
       .slice(-HISTORY_LIMIT)
       .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: m.routine
+        content: m.files?.length && !m.text
+          ? `(Shared files: ${m.files.map((f) => f.name).join(", ")})`
+          : m.routine
           ? `[Scheduled routine “${m.routine.name}”] ${m.text}`
           : m.from
             ? `[From bot “${m.from.name}”] ${m.text}`

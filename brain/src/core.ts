@@ -261,6 +261,8 @@ export const methods: Record<string, Handler> = {
   "chat.send": ({ botId, text }) => conversations.send(bots.get(botId), text),
   "chat.stop": ({ botId }) => conversations.stop(botId),
   "chat.clear": ({ botId }) => conversations.clear(botId),
+  /** A file a bot shared, base64-encoded, for the app to save or preview. */
+  "chat.file": ({ botId, fileId }) => conversations.readFile(String(botId), String(fileId)),
 
   // Conversation providers (keys never leave the brain)
   "providers.status": () => providerStatus(),
@@ -457,7 +459,7 @@ const botScoped: Record<string, string> = {
   "memory.list": "botId", "memory.add": "botId", "memory.edit": "botId", "memory.forget": "botId",
   "memory.delete": "botId", "memory.summary": "botId",
   "routines.list": "botId", "routines.create": "botId",
-  "chat.history": "botId", "chat.send": "botId", "chat.stop": "botId", "chat.clear": "botId",
+  "chat.history": "botId", "chat.send": "botId", "chat.stop": "botId", "chat.clear": "botId", "chat.file": "botId",
   "access.grant": "botId", "access.revoke": "botId",
 };
 

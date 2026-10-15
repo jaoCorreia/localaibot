@@ -149,8 +149,24 @@ struct MessageRow: View {
     let message: Brain.Message
     let bot: Brain.Bot
     let streaming: Bool
+    @State private var hovering = false
 
     var body: some View {
+        content
+            .onHover { hovering = $0 }
+            .help(Self.fullDate(message.at))
+    }
+
+    /// The send time, shown while the pointer is over the message.
+    private var time: some View {
+        Text(Self.shortTime(message.at))
+            .font(.system(size: 10.5).monospacedDigit())
+            .foregroundStyle(Theme.tertiary)
+            .opacity(hovering ? 1 : 0)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    @ViewBuilder private var content: some View {
         if message.role == "user" {
             VStack(alignment: .trailing, spacing: 4) {
               if let routine = message.routine {
@@ -173,25 +189,61 @@ struct MessageRow: View {
               }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            // Drawn in the gap below the message so nothing moves on hover.
+            .overlay(alignment: .bottomTrailing) { time.fixedSize().offset(y: 15) }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 AnimatedFace(face: bot.face, size: 22, working: streaming, seed: bot.id,
                              failed: message.error != nil).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 6) {
-                    if message.text.isEmpty && message.error == nil {
+                    if message.text.isEmpty && message.error == nil && (message.files ?? []).isEmpty {
                         TypingDots()
                     } else if !message.text.isEmpty {
                         MarkdownText(text: message.text)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    if let files = message.files, !files.isEmpty {
+                        AttachmentsView(files: files, botID: message.botId)
+                    }
                     if let error = message.error {
                         ErrorNote(title: error, detail: message.detail ?? (error.count > 90 ? error : nil))
                     }
                 }
+                // Drawn in the gap below the message so nothing moves on hover.
+                .overlay(alignment: .bottomLeading) {
+                    if !streaming { time.fixedSize().offset(y: 15) }
+                }
                 Spacer(minLength: 0)
             }
         }
+    }
+}
+
+extension MessageRow {
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static func date(_ at: String) -> Date? {
+        iso.date(from: at) ?? ISO8601DateFormatter().date(from: at)
+    }
+
+    /// "16:02" today, "Mon 16:02" this week, "Oct 3" before that.
+    static func shortTime(_ at: String) -> String {
+        guard let d = date(at) else { return "" }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return d.formatted(date: .omitted, time: .shortened) }
+        if let days = cal.dateComponents([.day], from: d, to: .now).day, days < 7 {
+            return d.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        }
+        return d.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    static func fullDate(_ at: String) -> String {
+        date(at)?.formatted(date: .complete, time: .shortened) ?? ""
     }
 }
 

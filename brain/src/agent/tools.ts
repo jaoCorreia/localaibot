@@ -83,6 +83,19 @@ export const COMPUTER_TOOLS: ToolSpec[] = [
   },
 ];
 
+/** Hands files from the device to the user as downloadable cards in the chat. */
+export const SHARE_FILE_TOOL: ToolSpec = {
+  name: "share_file",
+  description:
+    "Sends files from your device to the user's chat, where they can preview and download them. " +
+    "Use it whenever you made or downloaded a file the user asked for (a PDF, spreadsheet, image…). Absolute paths; up to 10 files, 50 MB each.",
+  parameters: {
+    type: "object",
+    properties: { paths: { type: "array", items: { type: "string" }, description: "Absolute paths on the device" } },
+    required: ["paths"],
+  },
+};
+
 /** Delegation between bots; offered whenever the bot has teammates. */
 export const ASK_BOT_TOOL: ToolSpec = {
   name: "ask_bot",

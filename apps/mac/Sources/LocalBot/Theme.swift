@@ -19,6 +19,7 @@ enum Theme {
     static let warn = Color(red: 0.95, green: 0.65, blue: 0.20)
     static let danger = Color(red: 0.95, green: 0.30, blue: 0.30)
     static let control = Color(red: 0.30, green: 0.50, blue: 1.0)
+    static let link = Color(red: 0.40, green: 0.62, blue: 1.0)
 
     private static func dynamic(light: CGFloat, dark: CGFloat) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in

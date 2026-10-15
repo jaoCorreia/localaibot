@@ -169,3 +169,31 @@ test("a bot keeps working past many steps, and old tool outputs are shortened", 
   assert.ok(outputs.slice(0, -20).every((o) => o.length < 400 && o.endsWith("(older output shortened)")));
   assert.ok(outputs.slice(-20).every((o) => o.length > 2000));
 });
+
+test("share_file copies files off the device into the chat, downloadable", async () => {
+  const pdf = Buffer.alloc(9 * 1024 * 1024, 7); // spans several read chunks
+  pdf.write("%PDF-1.7", 0);
+  class FileHands extends FakeHands {
+    override async shell(command: string) {
+      if (command.includes("/home/cua/missing.pdf")) return { code: 1, output: "" };
+      if (command.startsWith("test -f")) return { code: 0, output: `${pdf.length}\n` };
+      const skip = Number(/skip=(\d+)/.exec(command)![1]), bs = Number(/bs=(\d+)/.exec(command)![1]);
+      return { code: 0, output: pdf.subarray(skip * bs, (skip + 1) * bs).toString("base64") };
+    }
+  }
+  const { conv, bots, id } = setup({
+    a: [{ tools: [{ name: "share_file", args: { paths: ["/home/cua/report.pdf", "/home/cua/missing.pdf"] } }] }, { text: "Aqui está." }],
+  }, { hands: new FileHands() });
+  await conv.send(bots[0], "gera o pdf");
+  await settle(conv, bots);
+  const shared = conv.history(id.a).find((m) => m.files?.length);
+  assert.equal(shared?.files?.length, 1);
+  assert.equal(shared!.files![0].name, "report.pdf");
+  assert.equal(shared!.files![0].mime, "application/pdf");
+  assert.equal(shared!.files![0].size, pdf.length);
+  assert.ok(conv.history(id.a).some((m) => m.role === "activity" && m.text === "Couldn’t share a file"));
+  const file = conv.readFile(id.a, shared!.files![0].id);
+  assert.ok(Buffer.from(file.data, "base64").equals(pdf));
+  conv.clear(id.a);
+  assert.throws(() => conv.readFile(id.a, shared!.files![0].id));
+});
