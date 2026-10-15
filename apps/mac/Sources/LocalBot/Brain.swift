@@ -64,6 +64,8 @@ final class Brain: ObservableObject {
         let accessory: String
         let fill: String
         let deep: String
+        /// Head silhouette (round, egg, wide, bean); chosen in the face picker.
+        let shape: String?
     }
 
     struct Bot: Decodable, Identifiable, Hashable {
@@ -616,6 +618,7 @@ final class Brain: ObservableObject {
         let eyes: [AvatarOption]
         let mouths: [AvatarOption]
         let accessories: [AvatarOption]
+        let shapes: [AvatarOption]?
     }
 
     /// Every catalog option rendered on top of `value` (a spec or legacy seed).

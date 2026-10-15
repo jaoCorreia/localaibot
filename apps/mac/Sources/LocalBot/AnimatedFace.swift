@@ -478,10 +478,15 @@ struct BlockPose {
 
 /// The proportions of a bot's ball. Every bot gets one, picked from its face so
 /// it stays the same between launches.
-enum BlockShape: CaseIterable {
-    case round, egg, wide, bean
+enum BlockShape: String, CaseIterable {
+    case round, egg, wide, bean, star, asterisk
 
     init(_ face: Brain.Face) {
+        if let name = face.shape, let shape = BlockShape(rawValue: name) {
+            self = shape
+            return
+        }
+        // Older brains don't send a shape: derive it the way they used to.
         let sum = (face.fill + face.eyes + face.mouth + face.accessory).utf8.reduce(UInt(0)) { ($0 &* 31) &+ UInt($1) }
         self = Self.allCases[Int(sum % UInt(Self.allCases.count))]
     }
@@ -494,11 +499,13 @@ enum BlockShape: CaseIterable {
         case .egg: return 2.2
         case .wide: return 3.4
         case .bean: return 2.8
+        case .star, .asterisk: return 2
         }
     }
 
     /// The silhouette, centered in the 64×64 face space.
     var path: Path {
+        if let lobes = polar { return Self.polarPath(lobes) }
         let r = radii, n = squareness
         var p = Path()
         for i in 0..<72 {
@@ -519,6 +526,30 @@ enum BlockShape: CaseIterable {
         case .egg: return (23, 27)
         case .wide: return (29, 21)
         case .bean: return (27, 23)
+        case .star, .asterisk: return (29, 29)
         }
+    }
+
+    /// Shapes with points: radius as a function of the angle, one point up.
+    /// The inner radius still clears the eyes and mouth. Same as the brain's SVG.
+    private var polar: (count: CGFloat, base: CGFloat, power: CGFloat)? {
+        switch self {
+        case .star: return (5, 0.62, 1)        // soft five-pointed star
+        case .asterisk: return (6, 0.6, 4)     // six rounded arms
+        default: return nil
+        }
+    }
+
+    private static func polarPath(_ s: (count: CGFloat, base: CGFloat, power: CGFloat)) -> Path {
+        var p = Path()
+        for i in 0..<240 {
+            let t = CGFloat(i) / 240 * 2 * .pi
+            let wave = s.count == 5 ? (1 + cos(5 * (t + .pi / 2))) / 2 : pow(abs(cos(3 * (t + .pi / 2))), s.power)
+            let r = 29 * (s.base + (1 - s.base) * wave)
+            let pt = CGPoint(x: 32 + r * cos(t), y: 32 + r * sin(t))
+            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+        }
+        p.closeSubpath()
+        return p
     }
 }
