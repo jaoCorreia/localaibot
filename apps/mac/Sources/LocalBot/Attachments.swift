@@ -4,6 +4,7 @@ import QuickLook
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 import AVFoundation
+import ImageIO
 
 /// Files a bot shared in the chat. One document gets a preview card, images a
 /// grid, several files a list with "Download all", anything without a preview
@@ -288,7 +289,9 @@ private struct ImageTile: View {
         .draggableFile(file, botID: botID)
         .help(file.name)
         .task(id: file.id) {
-            if let url = await SharedFiles.shared.local(file, botID: botID) { image = NSImage(contentsOf: url) }
+            if let url = await SharedFiles.shared.local(file, botID: botID) {
+                image = await Thumbnails.downsampled(url, maxPixels: tall ? 1000 : 480)
+            }
         }
     }
 }
@@ -337,6 +340,22 @@ private extension View {
 }
 
 enum Thumbnails {
+    /// A small copy for the chat (a photo can be 4000 px; the tile shows ~240 pt),
+    /// decoded off the main thread.
+    static func downsampled(_ url: URL, maxPixels: Int) async -> NSImage? {
+        await Task.detached(priority: .userInitiated) { () -> NSImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        }.value
+    }
+
     @MainActor
     static func image(for file: Brain.Attachment, botID: String, size: CGSize) async -> NSImage? {
         guard file.size <= prefetchLimit, let url = await SharedFiles.shared.local(file, botID: botID) else { return nil }

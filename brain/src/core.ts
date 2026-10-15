@@ -380,6 +380,8 @@ export const methods: Record<string, Handler> = {
 
   // Chat
   "chat.history": ({ botId }) => conversations.history(botId),
+  /** A page of a chat (the app loads the latest, then older ones on scroll). */
+  "chat.page": ({ botId, limit, before }) => conversations.page(String(botId), Number(limit) || 100, before ? String(before) : undefined),
   "chat.send": ({ botId, text }) => conversations.send(bots.get(botId), text),
   "chat.stop": ({ botId }) => conversations.stop(botId),
   "chat.clear": ({ botId }) => conversations.clear(botId),
@@ -601,7 +603,7 @@ const botScoped: Record<string, string> = {
   "memory.list": "botId", "memory.add": "botId", "memory.edit": "botId", "memory.forget": "botId",
   "memory.delete": "botId", "memory.summary": "botId",
   "routines.list": "botId", "routines.create": "botId",
-  "chat.history": "botId", "chat.send": "botId", "chat.stop": "botId", "chat.clear": "botId", "chat.file": "botId",
+  "chat.history": "botId", "chat.page": "botId", "chat.send": "botId", "chat.stop": "botId", "chat.clear": "botId", "chat.file": "botId",
   "access.grant": "botId", "access.revoke": "botId",
 };
 

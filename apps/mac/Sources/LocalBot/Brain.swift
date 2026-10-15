@@ -243,6 +243,9 @@ final class Brain: ObservableObject {
     @Published private(set) var computers: [Computer] = []
     @Published private(set) var bots: [Bot] = []
     @Published private(set) var messages: [String: [Message]] = [:]
+    /// Chats with older messages not loaded yet (they load as you scroll up).
+    @Published private(set) var olderMessages: Set<String> = []
+    private var loadingOlder: Set<String> = []
     @Published private(set) var thinking: Set<String> = []
     private var botStatusRevision: [String: Int] = [:]
     @Published private(set) var routines: [Routine] = []
@@ -890,8 +893,30 @@ final class Brain: ObservableObject {
 
     // MARK: Chat
 
+    private struct Page: Decodable { let messages: [Message]; let more: Bool }
+
+    /// Opens a chat with its latest messages; older ones come with `loadOlder`.
     func loadHistory(_ botID: String) async {
-        if let list: [Message] = try? await request("chat.history", ["botId": botID]) { messages[botID] = list }
+        if let page: Page = try? await request("chat.page", ["botId": botID, "limit": 100]) {
+            messages[botID] = page.messages
+            if page.more { olderMessages.insert(botID) } else { olderMessages.remove(botID) }
+        } else if let list: [Message] = try? await request("chat.history", ["botId": botID]) {
+            // An older brain (e.g. a cloud brain not updated yet).
+            messages[botID] = list
+            olderMessages.remove(botID)
+        }
+    }
+
+    /// The page before the oldest loaded message.
+    func loadOlder(_ botID: String) async {
+        guard olderMessages.contains(botID), !loadingOlder.contains(botID),
+              let first = messages[botID]?.first else { return }
+        loadingOlder.insert(botID)
+        defer { loadingOlder.remove(botID) }
+        guard let page: Page = try? await request("chat.page", ["botId": botID, "limit": 100, "before": first.id]) else { return }
+        let known = Set((messages[botID] ?? []).map(\.id))
+        messages[botID] = page.messages.filter { !known.contains($0.id) } + (messages[botID] ?? [])
+        if page.more { olderMessages.insert(botID) } else { olderMessages.remove(botID) }
     }
 
     func send(_ text: String, to botID: String) async { await perform("chat.send", ["botId": botID, "text": text]) }

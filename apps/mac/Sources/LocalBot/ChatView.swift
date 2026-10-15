@@ -79,10 +79,23 @@ struct ChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
+                    // Older messages load as you reach the top, keeping your place.
+                    if brain.olderMessages.contains(bot.id) {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity)
+                            .onAppear {
+                                let anchor = messages.first?.id
+                                Task {
+                                    await brain.loadOlder(bot.id)
+                                    if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                                }
+                            }
+                    }
+                    let liveFace = messages.last(where: { $0.role == "assistant" })?.id
                     ForEach(ChatItem.group(messages)) { item in
                         switch item {
                         case .message(let message):
-                            MessageRow(message: message, bot: bot, streaming: thinking && message.id == messages.last?.id)
+                            MessageRow(message: message, bot: bot, streaming: thinking && message.id == messages.last?.id,
+                                       animated: message.id == liveFace)
                                 .id(message.id)
                         case .steps(let steps):
                             StepsGroup(steps: steps, deviceName: deviceName,
@@ -167,6 +180,8 @@ struct MessageRow: View {
     let message: Brain.Message
     let bot: Brain.Bot
     let streaming: Bool
+    /// Only the latest reply's face moves; the rest are drawn once.
+    var animated = true
     @State private var hovering = false
 
     var body: some View {
@@ -218,7 +233,7 @@ struct MessageRow: View {
         } else {
             HStack(alignment: .top, spacing: 10) {
                 AnimatedFace(face: bot.face, size: 22, working: streaming, seed: bot.id,
-                             failed: message.error != nil).padding(.top, 1)
+                             failed: message.error != nil, still: !animated && !streaming).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 6) {
                     if message.text.isEmpty && message.error == nil && (message.files ?? []).isEmpty && message.connect == nil {
                         TypingDots()

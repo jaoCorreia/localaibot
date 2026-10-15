@@ -17,6 +17,8 @@ struct AnimatedFace: View {
     var followsPointer = false
     /// The last request failed: finishing work then reads as a let-down.
     var failed = false
+    /// Drawn once, not animated: older faces in a chat (each animation redraws 30×/s).
+    var still = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var anchor = ViewAnchor()
@@ -25,7 +27,7 @@ struct AnimatedFace: View {
 
     var body: some View {
         Group {
-            if reduceMotion {
+            if reduceMotion || still {
                 canvas(at: 0, animated: false)
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
