@@ -130,7 +130,7 @@ struct FieldLabel: View {
 /// logo where there is one (see ProviderLogos), an SF Symbol otherwise.
 @MainActor
 func presetSymbol(_ preset: String) -> String {
-    if ProviderLogos.image(preset) != nil { return "logo.\(preset)" }
+    if ProviderLogos.shapes.contains(preset) || ProviderLogos.image(preset) != nil { return "logo.\(preset)" }
     switch preset {
     case "openrouter": return "arrow.triangle.branch"
     case "openai": return "circle.hexagongrid"
