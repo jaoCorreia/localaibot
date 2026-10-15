@@ -90,7 +90,7 @@ struct StepLayout<Content: View, Footer: View>: View {
 
 struct WelcomeStep: View {
     let onNext: () -> Void
-    private let face = Brain.Face(color: "sky", eyes: "dot", mouth: "smile", accessory: "none", fill: "#4f9cf9", deep: "#08245c")
+    private let face = Brain.Face(color: "sky", eyes: "dot", mouth: "smile", accessory: "none", fill: "#4f9cf9", deep: "#08245c", shape: nil)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

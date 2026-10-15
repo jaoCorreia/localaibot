@@ -94,6 +94,8 @@ struct BotEditor: View {
             draft = .init(name: bot.name, role: bot.role, instructions: bot.instructions, provider: bot.provider,
                           model: bot.model, computerId: bot.ownedComputer, avatarSeed: bot.avatarSeed)
             avatar = bot.avatar
+            // The saved face right away, so the preview doesn't change shape while options load.
+            face = bot.face
         } else {
             draft.provider = brain.providerStatus?.defaultProvider ?? ""
             draft.model = brain.providerStatus?.defaultModel ?? ""
@@ -172,6 +174,7 @@ struct AvatarPicker: View {
                 part("Eyes") { faces(options.eyes, current: options.value) }
                 part("Mouth") { faces(options.mouths, current: options.value) }
                 part("Extra") { faces(options.accessories, current: options.value) }
+                if let shapes = options.shapes { part("Shape") { faces(shapes, current: options.value) } }
             } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 200)
             }

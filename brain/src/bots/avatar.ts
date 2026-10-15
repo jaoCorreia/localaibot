@@ -1,7 +1,7 @@
 /**
  * Bot avatars: a flat solid-color circle with a white face, assembled from a
  * small catalog of parts. A bot stores its avatar as a string:
- *   - "v1:<color>:<eyes>:<mouth>:<accessory>"  chosen from the catalog
+ *   - "v1:<color>:<eyes>:<mouth>:<accessory>[:<shape>]"  chosen from the catalog
  *   - anything else                             a seed; parts are derived from it
  * Same string, same face. Flat on purpose: no gradients, highlights or glows.
  */
@@ -22,6 +22,8 @@ export const COLORS = {
 export const EYES = ["dot", "pill", "visor", "ring", "happy", "spark"] as const;
 export const MOUTHS = ["smile", "line", "dot", "o", "grin", "none"] as const;
 export const ACCESSORIES = ["none", "cheeks"] as const;
+/** Head silhouettes; the app draws the same ones in 3D (BlockShape). */
+export const SHAPES = ["round", "egg", "wide", "bean", "star", "asterisk"] as const;
 /** Extras that were removed; faces that used them keep everything else. */
 const RETIRED_ACCESSORIES = ["antenna", "antennae", "orbit"];
 
@@ -31,12 +33,14 @@ export interface AvatarSpec {
   eyes: (typeof EYES)[number];
   mouth: (typeof MOUTHS)[number];
   accessory: (typeof ACCESSORIES)[number];
+  shape: (typeof SHAPES)[number];
 }
 
 const PART_LABELS: Record<string, string> = {
   dot: "Dots", pill: "Pills", visor: "Visor", ring: "Rings", happy: "Happy", spark: "Sparks",
   smile: "Smile", line: "Line", o: "Oh", grin: "Grin", none: "None",
   cheeks: "Cheeks",
+  round: "Round", egg: "Egg", wide: "Wide", bean: "Bean", star: "Star", asterisk: "Asterisk",
 };
 
 /** mulberry32 seeded by an FNV-1a hash of the seed string. */
@@ -55,22 +59,75 @@ function rng(seed: string) {
 const pick = <T>(r: () => number, list: readonly T[]) => list[Math.floor(r() * list.length)];
 
 export function parseAvatar(value: string): AvatarSpec {
-  const [v, color, eyes, mouth, accessory] = value.split(":");
+  const [v, color, eyes, mouth, accessory, shape] = value.split(":");
   if (v === "v1" && color in COLORS && (EYES as readonly string[]).includes(eyes) && (MOUTHS as readonly string[]).includes(mouth)) {
-    if ((ACCESSORIES as readonly string[]).includes(accessory)) return { color, eyes, mouth, accessory } as AvatarSpec;
-    if (RETIRED_ACCESSORIES.includes(accessory)) return { color, eyes, mouth, accessory: "none" } as AvatarSpec;
+    const extra = (ACCESSORIES as readonly string[]).includes(accessory) ? accessory
+      : RETIRED_ACCESSORIES.includes(accessory) ? "none" : null;
+    if (extra) {
+      const spec = { color, eyes, mouth, accessory: extra } as Omit<AvatarSpec, "shape">;
+      return { ...spec, shape: (SHAPES as readonly string[]).includes(shape) ? (shape as AvatarSpec["shape"]) : legacyShape(spec) };
+    }
   }
   const r = rng(value);
-  return {
+  const spec = {
     color: pick(r, Object.keys(COLORS) as Color[]),
     eyes: pick(r, EYES),
     mouth: pick(r, MOUTHS),
     // Most random faces stay plain; accessories are a choice.
     accessory: r() < 0.75 ? "none" : "cheeks",
-  };
+  } as Omit<AvatarSpec, "shape">;
+  return { ...spec, shape: legacyShape(spec) };
 }
 
-export const formatAvatar = (s: AvatarSpec) => `v1:${s.color}:${s.eyes}:${s.mouth}:${s.accessory}`;
+/**
+ * Faces saved before the shape was a choice keep the head they had: the app
+ * used to derive it from the other parts with this hash.
+ */
+function legacyShape(s: Omit<AvatarSpec, "shape">): AvatarSpec["shape"] {
+  let sum = 0n;
+  for (const byte of Buffer.from(COLORS[s.color].fill + s.eyes + s.mouth + s.accessory, "utf8")) {
+    sum = (sum * 31n + BigInt(byte)) & 0xffffffffffffffffn;
+  }
+  // Only the original four existed back then.
+  return SHAPES[Number(sum % 4n)];
+}
+
+export const formatAvatar = (s: AvatarSpec) => `v1:${s.color}:${s.eyes}:${s.mouth}:${s.accessory}:${s.shape}`;
+
+/** Superellipse exponent and half sizes in the 64×64 space, as in the app. */
+const SHAPE_GEOMETRY: Record<Exclude<AvatarSpec["shape"], "star" | "asterisk">, { n: number; a: number; b: number }> = {
+  round: { n: 2, a: 27, b: 27 },
+  egg: { n: 2.2, a: 23, b: 27 },
+  wide: { n: 3.4, a: 29, b: 21 },
+  bean: { n: 2.8, a: 27, b: 23 },
+};
+
+/** The head as an SVG path, scaled so it fills the 64×64 tile like the old circle. */
+function headPath(shape: AvatarSpec["shape"]) {
+  if (shape === "star" || shape === "asterisk") return pointedPath(shape);
+  const { n, a, b } = SHAPE_GEOMETRY[shape];
+  const k = 31 / Math.max(a, b);
+  const pts = Array.from({ length: 72 }, (_, i) => {
+    const t = (i / 72) * 2 * Math.PI, c = Math.cos(t), s = Math.sin(t);
+    const x = 32 + k * a * Math.sign(c) * Math.abs(c) ** (2 / n);
+    const y = 32 + k * b * Math.sign(s) * Math.abs(s) ** (2 / n);
+    return `${x.toFixed(2)} ${y.toFixed(2)}`;
+  });
+  return `M${pts.join("L")}Z`;
+}
+
+/** Star and asterisk: radius as a function of the angle, one point up (as in the app). */
+function pointedPath(shape: "star" | "asterisk") {
+  const base = shape === "star" ? 0.62 : 0.6;
+  const k = 31 / 29;
+  const pts = Array.from({ length: 240 }, (_, i) => {
+    const t = (i / 240) * 2 * Math.PI;
+    const wave = shape === "star" ? (1 + Math.cos(5 * (t + Math.PI / 2))) / 2 : Math.abs(Math.cos(3 * (t + Math.PI / 2))) ** 4;
+    const r = 29 * k * (base + (1 - base) * wave);
+    return `${(32 + r * Math.cos(t)).toFixed(2)} ${(32 + r * Math.sin(t)).toFixed(2)}`;
+  });
+  return `M${pts.join("L")}Z`;
+}
 
 const INK = "#fff";
 const EYE_Y = 31;
@@ -123,7 +180,7 @@ export function renderAvatar(spec: AvatarSpec): string {
   const c = COLORS[spec.color];
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-    `<circle cx="32" cy="32" r="32" fill="${c.fill}"/>` +
+    `<path d="${headPath(spec.shape)}" fill="${c.fill}"/>` +
     accessory(spec.accessory, c.deep) +
     eyes(spec.eyes) +
     mouth(spec.mouth) +
@@ -152,6 +209,7 @@ export function avatarOptions(value: string) {
     eyes: EYES.map((id) => option({ eyes: id }, id, PART_LABELS[id])),
     mouths: MOUTHS.map((id) => option({ mouth: id }, id, PART_LABELS[id])),
     accessories: ACCESSORIES.map((id) => option({ accessory: id }, id, PART_LABELS[id])),
+    shapes: SHAPES.map((id) => option({ shape: id }, id, PART_LABELS[id])),
   };
 }
 
